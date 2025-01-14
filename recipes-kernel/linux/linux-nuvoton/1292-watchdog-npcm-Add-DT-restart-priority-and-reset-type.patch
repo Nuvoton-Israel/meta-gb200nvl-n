@@ -1,0 +1,70 @@
+From 509af16b537f4555d63c5e38ffcc5c51dab92242 Mon Sep 17 00:00:00 2001
+From: Tomer Maimon <tmaimon77@gmail.com>
+Date: Tue, 30 May 2023 14:44:57 +0300
+Subject: [PATCH 2/3] watchdog: npcm: Add DT restart priority and reset type
+ support
+
+Add device tree restart priority and three reset types support.
+
+Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+---
+ drivers/watchdog/npcm_wdt.c | 27 ++++++++++++++++++++++-----
+ 1 file changed, 22 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/watchdog/npcm_wdt.c b/drivers/watchdog/npcm_wdt.c
+index 283af012f8d6..4f44ff44dfff 100644
+--- a/drivers/watchdog/npcm_wdt.c
++++ b/drivers/watchdog/npcm_wdt.c
+@@ -28,6 +28,7 @@
+ #define NPCM7XX_SWR2RST			BIT(27)
+ #define NPCM7XX_SWR3RST			BIT(26)
+ #define NPCM7XX_SWR4RST			BIT(25)
++#define NPCM8XX_RST			(GENMASK(31, 23) |  GENMASK(15, 12))
+ 
+  /* WD register */
+ #define NPCM_WTCR	0x1C
+@@ -211,7 +212,7 @@ static const struct watchdog_ops npcm_wdt_ops = {
+ static void npcm_get_reset_status(struct npcm_wdt *wdt, struct device *dev)
+ {
+ 	struct regmap *gcr_regmap;
+-	u32 rstval;
++	u32 rstval, ressrval;
+ 
+ 	gcr_regmap = syscon_regmap_lookup_by_phandle(dev->of_node, "syscon");
+ 	if (IS_ERR(gcr_regmap)) {
+@@ -219,12 +220,28 @@ static void npcm_get_reset_status(struct npcm_wdt *wdt, struct device *dev)
+ 		return;
+ 	}
+ 
+-	regmap_read(gcr_regmap, NPCM7XX_RESSR_OFFSET, &rstval);
+-	if (!rstval) {
+-		regmap_read(gcr_regmap, NPCM7XX_INTCR2_OFFSET, &rstval);
+-		rstval = ~rstval;
++	/* In Poleg, the INTCR2 indicate only power reset */
++	regmap_read(gcr_regmap, NPCM7XX_INTCR2_OFFSET, &rstval);
++	if (of_device_is_compatible(dev->of_node, "nuvoton,npcm750-wdt")) {
++		if ((rstval & NPCM7XX_PORST) == 0) {
++			rstval = NPCM7XX_PORST;
++			/* Clear power reset indication */
++			regmap_write(gcr_regmap, NPCM7XX_INTCR2_OFFSET,
++				     rstval | NPCM7XX_PORST);
++		} else {
++			rstval = 0;
++		}
++		regmap_read(gcr_regmap, NPCM7XX_RESSR_OFFSET, &ressrval);
++		rstval |= ressrval;
++		/* After reading the RESSR Clear reset status */
++		regmap_write(gcr_regmap, NPCM7XX_RESSR_OFFSET, ressrval);
+ 	}
+ 
++	/* In Arbel, after reading the INTCR2 Clear reset status */
++	if (of_device_is_compatible(dev->of_node, "nuvoton,npcm845-wdt"))
++		regmap_write(gcr_regmap, NPCM7XX_INTCR2_OFFSET,
++			     rstval & ~NPCM8XX_RST);
++
+ 	if (rstval & wdt->card_reset)
+ 		wdt->wdd.bootstatus |= WDIOF_CARDRESET;
+ 	if (rstval & wdt->ext1_reset)
+-- 
+2.43.0
+

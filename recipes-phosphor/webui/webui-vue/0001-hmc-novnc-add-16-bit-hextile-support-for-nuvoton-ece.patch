@@ -1,0 +1,25 @@
+From f9973b661d1018c454693671fc7e0021f502ae26 Mon Sep 17 00:00:00 2001
+From: Joseph Liu <kwliu@nuvoton.com>
+Date: Tue, 14 Jan 2025 15:21:38 +0800
+Subject: [PATCH] hmc: novnc: add 16-bit hextile support for nuvoton ece engine
+
+Signed-off-by: Joseph Liu <kwliu@nuvoton.com>
+---
+ package-lock.json | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/package-lock.json b/package-lock.json
+index 42eecbea..bc59e67d 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -2420,6 +2420,7 @@
+         },
+         "node_modules/@novnc/novnc": {
+             "version": "1.2.0",
++            "resolved": "git+ssh://git@github.com/Nuvoton-Israel/novnc.git#openbmc-v1.2.0",
+             "license": "MPL-2.0"
+         },
+         "node_modules/@npmcli/fs": {
+-- 
+2.43.0
+

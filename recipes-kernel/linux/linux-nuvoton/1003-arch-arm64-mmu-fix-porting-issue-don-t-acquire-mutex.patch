@@ -1,0 +1,42 @@
+From f8f2af67aa9a251dcecd800c49988da087ab5ba7 Mon Sep 17 00:00:00 2001
+From: Joseph Liu <kwliu@nuvoton.com>
+Date: Mon, 13 Jan 2025 13:44:53 +0800
+Subject: [PATCH] arch: arm64: mmu: fix porting issue: don't acquire mutex
+
+This mutex lock alrady removed since
+61d2d1808b20da4a45a90b4bd61ae92f729bab78
+
+Signed-off-by: Joseph Liu <kwliu@nuvoton.com>
+---
+ arch/arm64/mm/mmu.c | 8 --------
+ 1 file changed, 8 deletions(-)
+
+diff --git a/arch/arm64/mm/mmu.c b/arch/arm64/mm/mmu.c
+index fece0ca18cd1..47781bec6171 100644
+--- a/arch/arm64/mm/mmu.c
++++ b/arch/arm64/mm/mmu.c
+@@ -333,12 +333,6 @@ static void alloc_init_pud(pgd_t *pgdp, unsigned long addr, unsigned long end,
+ 	}
+ 	BUG_ON(p4d_bad(p4d));
+ 
+-	/*
+-	 * No need for locking during early boot. And it doesn't work as
+-	 * expected with KASLR enabled.
+-	 */
+-	if (system_state != SYSTEM_BOOTING)
+-		mutex_lock(&fixmap_lock);
+ 	pudp = pud_set_fixmap_offset(p4dp, addr);
+ 	do {
+ 		pud_t old_pud = READ_ONCE(*pudp);
+@@ -370,8 +364,6 @@ static void alloc_init_pud(pgd_t *pgdp, unsigned long addr, unsigned long end,
+ 	} while (pudp++, addr = next, addr != end);
+ 
+ 	pud_clear_fixmap();
+-	if (system_state != SYSTEM_BOOTING)
+-		mutex_unlock(&fixmap_lock);
+ }
+ 
+ static void __create_pgd_mapping_locked(pgd_t *pgdir, phys_addr_t phys,
+-- 
+2.43.0
+

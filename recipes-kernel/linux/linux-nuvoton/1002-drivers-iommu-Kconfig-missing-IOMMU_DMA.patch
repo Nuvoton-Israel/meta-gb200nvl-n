@@ -1,0 +1,28 @@
+From 408e4c3bcdf637da758ed1dfc31c0762acdffc54 Mon Sep 17 00:00:00 2001
+From: Joseph Liu <kwliu@nuvoton.com>
+Date: Mon, 13 Jan 2025 13:58:54 +0800
+Subject: [PATCH] drivers: iommu: Kconfig: missing IOMMU_DMA
+
+We should use def_bool to enable IOMMU_DMA
+
+Signed-off-by: Joseph Liu <kwliu@nuvoton.com>
+---
+ drivers/iommu/Kconfig | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/iommu/Kconfig b/drivers/iommu/Kconfig
+index 5a2e9c64c3f8..23a2d67ece8c 100644
+--- a/drivers/iommu/Kconfig
++++ b/drivers/iommu/Kconfig
+@@ -147,7 +147,7 @@ config OF_IOMMU
+ # IOMMU-agnostic DMA-mapping layer
+ config IOMMU_DMA
+ #	def_bool ARM64 || IA64 || X86
+-        default y
++	def_bool y
+ 	select DMA_OPS
+ 	select IOMMU_API
+ 	select IOMMU_IOVA
+-- 
+2.43.0
+

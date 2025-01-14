@@ -1,0 +1,44 @@
+From 95d81ac53ea312a34def0bff5c83f532e082e26a Mon Sep 17 00:00:00 2001
+From: Tomer Maimon <tmaimon77@gmail.com>
+Date: Sun, 12 Feb 2023 19:06:54 +0200
+Subject: [PATCH] misc: mbox: add npcm7xx pci mailbox driver
+
+Add Nuvoton BMC NPCM PCI Mailbox driver.
+
+Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+---
+ drivers/misc/Kconfig  | 7 +++++++
+ drivers/misc/Makefile | 2 ++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/drivers/misc/Kconfig b/drivers/misc/Kconfig
+index 8681e3bf7a20..6072ab358308 100644
+--- a/drivers/misc/Kconfig
++++ b/drivers/misc/Kconfig
+@@ -569,6 +569,13 @@ config TPS6594_PFSM
+ 	  This driver can also be built as a module.  If so, the module
+ 	  will be called tps6594-pfsm.
+ 
++config NPCM_PCI_MBOX
++	tristate "NPCM PCI Mailbox Controller"
++	depends on (ARCH_NPCM || COMPILE_TEST) && REGMAP && MFD_SYSCON
++	help
++	  Expose the NPCM BMC PCI MBOX registers found on Nuvoton SOCs
++	  to userspace.
++
+ source "drivers/misc/c2port/Kconfig"
+ source "drivers/misc/eeprom/Kconfig"
+ source "drivers/misc/cb710/Kconfig"
+diff --git a/drivers/misc/Makefile b/drivers/misc/Makefile
+index 7639cba23b66..d2cea31a6e6c 100644
+--- a/drivers/misc/Makefile
++++ b/drivers/misc/Makefile
+@@ -73,3 +73,5 @@ obj-$(CONFIG_TMR_MANAGER)      += xilinx_tmr_manager.o
+ obj-$(CONFIG_TMR_INJECT)	+= xilinx_tmr_inject.o
+ obj-$(CONFIG_TPS6594_ESM)	+= tps6594-esm.o
+ obj-$(CONFIG_TPS6594_PFSM)	+= tps6594-pfsm.o
++obj-$(CONFIG_NPCM_LPC_BPC)	+= npcm7xx-lpc-bpc.o
++obj-$(CONFIG_NPCM_PCI_MBOX)	+= npcm7xx-pci-mbox.o
+-- 
+2.43.0
+

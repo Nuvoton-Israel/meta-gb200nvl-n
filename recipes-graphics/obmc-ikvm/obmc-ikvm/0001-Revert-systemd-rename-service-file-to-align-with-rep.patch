@@ -1,0 +1,32 @@
+From 66ecf33aafb1257b95146084989ed27f155a19d4 Mon Sep 17 00:00:00 2001
+From: Joseph Liu <kwliu@nuvoton.com>
+Date: Wed, 8 Jan 2025 14:21:05 +0800
+Subject: [PATCH] Revert "systemd: rename service file to align with repo name"
+
+This reverts commit b4ae317e8b441354c6c4dbe61e359b2ce56326bf.
+---
+ meson.build                              | 2 +-
+ obmc-ikvm.service => start-ipkvm.service | 0
+ 2 files changed, 1 insertion(+), 1 deletion(-)
+ rename obmc-ikvm.service => start-ipkvm.service (100%)
+
+diff --git a/meson.build b/meson.build
+index e2be9ff..a3edaff 100644
+--- a/meson.build
++++ b/meson.build
+@@ -39,7 +39,7 @@ executable(
+ 
+ fs = import('fs')
+ fs.copyfile(
+-    'obmc-ikvm.service',
++    'start-ipkvm.service',
+     install: true,
+     install_dir:
+         dependency('systemd').get_pkgconfig_variable(
+diff --git a/obmc-ikvm.service b/start-ipkvm.service
+similarity index 100%
+rename from obmc-ikvm.service
+rename to start-ipkvm.service
+-- 
+2.43.0
+

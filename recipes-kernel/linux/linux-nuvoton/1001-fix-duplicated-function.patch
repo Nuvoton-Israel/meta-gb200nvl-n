@@ -1,0 +1,110 @@
+From 354960df28af0608f40d4480afdf50b8e919f44a Mon Sep 17 00:00:00 2001
+From: Joseph Liu <kwliu@nuvoton.com>
+Date: Mon, 13 Jan 2025 13:50:13 +0800
+Subject: [PATCH] fix duplicated function
+
+Signed-off-by: Joseph Liu <kwliu@nuvoton.com>
+---
+ arch/arm64/include/asm/sections.h |  5 -----
+ drivers/pci/Makefile              |  2 +-
+ drivers/tee/tee_shm.c             | 29 -----------------------------
+ mm/secretmem.c                    | 16 ----------------
+ 4 files changed, 1 insertion(+), 51 deletions(-)
+
+diff --git a/arch/arm64/include/asm/sections.h b/arch/arm64/include/asm/sections.h
+index 045b2afd70ba..40971ac1303f 100644
+--- a/arch/arm64/include/asm/sections.h
++++ b/arch/arm64/include/asm/sections.h
+@@ -28,9 +28,4 @@ static inline size_t entry_tramp_text_size(void)
+ 	return __entry_tramp_text_end - __entry_tramp_text_start;
+ }
+ 
+-static inline size_t entry_tramp_text_size(void)
+-{
+-	return __entry_tramp_text_end - __entry_tramp_text_start;
+-}
+-
+ #endif /* __ASM_SECTIONS_H */
+diff --git a/drivers/pci/Makefile b/drivers/pci/Makefile
+index 40ed36a6fc49..cc8b4e01e29d 100644
+--- a/drivers/pci/Makefile
++++ b/drivers/pci/Makefile
+@@ -5,7 +5,7 @@
+ obj-$(CONFIG_PCI)		+= access.o bus.o probe.o host-bridge.o \
+ 				   remove.o pci.o pci-driver.o search.o \
+ 				   pci-sysfs.o rom.o setup-res.o irq.o vpd.o \
+-				   setup-bus.o vc.o mmap.o setup-irq.o msi.o
++				   setup-bus.o vc.o mmap.o setup-irq.o
+ 
+ obj-$(CONFIG_PCI)		+= msi/
+ obj-$(CONFIG_PCI)		+= pcie/
+diff --git a/drivers/tee/tee_shm.c b/drivers/tee/tee_shm.c
+index 30b2e59a25a1..673cf0359494 100644
+--- a/drivers/tee/tee_shm.c
++++ b/drivers/tee/tee_shm.c
+@@ -293,35 +293,6 @@ register_shm_helper(struct tee_context *ctx, unsigned long addr,
+ 	return ret;
+ }
+ 
+-static int tee_shm_fop_release(struct inode *inode, struct file *filp)
+-{
+-	tee_shm_put(filp->private_data);
+-	return 0;
+-}
+-
+-static int tee_shm_fop_mmap(struct file *filp, struct vm_area_struct *vma)
+-{
+-	struct tee_shm *shm = filp->private_data;
+-	size_t size = vma->vm_end - vma->vm_start;
+-
+-	/* Refuse sharing shared memory provided by application */
+-	if (shm->flags & TEE_SHM_USER_MAPPED)
+-		return -EINVAL;
+-
+-	/* check for overflowing the buffer's size */
+-	if (vma->vm_pgoff + vma_pages(vma) > shm->size >> PAGE_SHIFT)
+-		return -EINVAL;
+-
+-	return remap_pfn_range(vma, vma->vm_start, shm->paddr >> PAGE_SHIFT,
+-			       size, vma->vm_page_prot);
+-}
+-
+-static const struct file_operations tee_shm_fops = {
+-	.owner = THIS_MODULE,
+-	.release = tee_shm_fop_release,
+-	.mmap = tee_shm_fop_mmap,
+-};
+-
+ /**
+  * tee_shm_register_user_buf() - Register a userspace shared memory buffer
+  * @ctx:	Context that registers the shared memory
+diff --git a/mm/secretmem.c b/mm/secretmem.c
+index 74a4b838dd5b..399552814fd0 100644
+--- a/mm/secretmem.c
++++ b/mm/secretmem.c
+@@ -188,22 +188,6 @@ static const struct inode_operations secretmem_iops = {
+ 	.setattr = secretmem_setattr,
+ };
+ 
+-static int secretmem_setattr(struct user_namespace *mnt_userns,
+-			     struct dentry *dentry, struct iattr *iattr)
+-{
+-	struct inode *inode = d_inode(dentry);
+-	unsigned int ia_valid = iattr->ia_valid;
+-
+-	if ((ia_valid & ATTR_SIZE) && inode->i_size)
+-		return -EINVAL;
+-
+-	return simple_setattr(mnt_userns, dentry, iattr);
+-}
+-
+-static const struct inode_operations secretmem_iops = {
+-	.setattr = secretmem_setattr,
+-};
+-
+ static struct vfsmount *secretmem_mnt;
+ 
+ static struct file *secretmem_file_create(unsigned long flags)
+-- 
+2.43.0
+
