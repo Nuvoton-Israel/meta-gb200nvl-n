@@ -1,0 +1,405 @@
+// SPDX-License-Identifier: GPL-2.0
+// Copyright (c) 2021 Nuvoton Technology tomer.maimon@nuvoton.com
+
+/dts-v1/;
+#include "nuvoton-npcm845.dtsi"
+#include <dt-bindings/leds/common.h>
+
+/ {
+	model = "NPCM845 GB200NVL BMC";
+	compatible = "nuvoton,npcm845-evb", "nuvoton,npcm845";
+
+	aliases {
+		serial0 = &serial0;
+		ethernet0 = &gmac0;
+		ethernet1 = &gmac1;
+		ethernet2 = &gmac2;
+		ethernet3 = &gmac3;
+		mdio-gpio0 = &mdio0;
+		udc0 = &udc0;
+		udc1 = &udc1;
+		udc2 = &udc2;
+		udc3 = &udc3;
+		udc4 = &udc4;
+		udc5 = &udc5;
+		udc6 = &udc6;
+		udc7 = &udc7;
+		fiu0 = &fiu0;
+		fiu1 = &fiu3;
+		fiu2 = &fiux;
+		fiu3 = &fiu1;
+		i2c0 = &i2c0;
+		i2c1 = &i2c1;
+		i2c2 = &i2c2;
+		i2c3 = &i2c3;
+		i2c6 = &i2c6;
+		i2c8 = &i2c8;
+		i2c12 = &i2c12;
+	};
+
+	chosen {
+		stdout-path = &serial0;
+	};
+
+	memory {
+		reg = <0x0 0x0 0x0 0x40000000>;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		heartbeat {
+			label = "heartbeat";
+			gpios = <&gpio3 2 GPIO_ACTIVE_HIGH>; /* gpio98 */
+		};
+		identify {
+			label = "identify";
+			gpios = <&gpio1 29 GPIO_ACTIVE_HIGH>; /* gpio61 */
+		};
+	};
+
+	refclk: refclk-25mhz {
+		compatible = "fixed-clock";
+		clock-output-names = "ref";
+		clock-frequency = <25000000>;
+		#clock-cells = <0>;
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		tip_reserved: tip@0x0 {
+			reg = <0x0 0x0 0x0 0x6200000>;
+		};
+	};
+
+
+	mdio0: mdio@0 {
+		compatible = "virtual,mdio-gpio";
+		gpios = <&gpio1 25 GPIO_ACTIVE_HIGH>,
+			<&gpio1 26 GPIO_ACTIVE_HIGH>; 
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		phy0: ethernet-phy@1 {
+		};
+	};
+
+	tip_sram: sram@fffce000 {
+		compatible = "mmio-sram";
+		reg = <0 0xfffce000 0 0x1000>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges = <0 0 0xfffce000 0x1000>;
+		ch0_shm: ch_shm@0 {
+			reg = <0 0x1000>;
+		};
+	};
+
+	tip {
+		compatible = "nuvoton,cerberus";
+		mboxes = <&tip_mbox 0 16>; /*channel 0, 16th doorbell */
+		mbox-names = "cerberus";
+		shmem = <&ch0_shm>;
+		status = "okay";
+	};
+
+};
+
+&gmac0 {
+	phy-mode = "rgmii-id";
+	snps,eee-force-disable;
+	status = "okay";
+};
+
+&gmac1 {
+	phy-mode = "rgmii-id";
+	snps,eee-force-disable;
+	status = "okay";
+};
+
+&gmac2 {
+	phy-mode = "rmii";
+	pinctrl-names = "default";
+	pinctrl-0 = <&r1_pins
+			&r1oen_pins>;
+	phy-handle = <&phy0>;
+	status = "okay";
+};
+
+&tmps {
+	status = "okay";
+};
+
+&sgpio2 {
+	status = "okay";
+	gpio-line-names =
+		"","","","","","","","",
+		"g_led","","","","","","","",
+		"","","","","","","","",
+		"","","","","","","","",
+		"","","","","","","","",
+		"","","","","","","","",
+		"","","","","","","","",
+		"","","","","","","","",
+		"","","","","","","","",
+		"","","","","","","","",
+		"","","","","","","","",
+		"","","","","","","","",
+		"","","","","","","","",
+		"","","","","","","","",
+		"","","","","","","","",
+		"","","","","","","","";
+};
+
+&serial0 {
+	status = "okay";
+};
+
+&fiu0 {
+	status = "okay";
+	spi-nor@0 {
+		compatible = "jedec,spi-nor";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		spi-rx-bus-width = <1>;
+		reg = <0>;
+		spi-max-frequency = <5000000>;
+		partitions@80000000 {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			bmc@0 {
+				label = "bmc";
+				reg = <0x00000000 0x04000000>;
+				};
+			u-boot@0 {
+				label = "u-boot";
+				reg = <0x00000000 0x003C0000>;
+				};
+			u-boot-env@3c0000 {
+				label = "u-boot-env";
+				reg = <0x003C0000 0x00040000>;
+				};
+			kernel@400000 {
+				label = "kernel";
+				reg = <0x00400000 0x00700000>;
+				};
+			rofs@b00000 {
+				label = "rofs";
+				reg = <0x00b00000 0x03500000>;
+				};
+			dummy@4000000 {
+				label = "dummy";
+				reg = <0x4000000 0x1000000>;
+				};
+			rwfs@4000000 {
+				label = "rwfs";
+				reg = <0x4000000 0x1000000>;
+				};
+			log@4000000 {
+				label = "log";
+				reg = <0x5000000 0x2000000>;
+				};
+
+            cfg-env@0 {
+                reg = <0x7000000 0x10000>;            // 128KB at offset 0
+                label = "pciechip_config";
+            };
+		};
+	};
+};
+
+&fiu1 {
+	/*pinctrl-0 = <&spi1_pins>, <&spi1quad_pins>;*/
+	status = "okay";
+	spi-nor@0 {
+		compatible = "jedec,spi-nor";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		spi-rx-bus-width = <2>;
+		spi-tx-bus-width = <2>;
+		reg = <0>;
+		spi-max-frequency = <5000000>;
+		partitions@A0000000 {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			system1@0 {
+				label = "spi1-system1";
+				reg = <0x0 0x0>;
+			};
+		};
+	};
+};
+
+&fiu3 {
+	pinctrl-0 = <&spi3_pins>, <&spi3quad_pins>;
+	status = "okay";
+	spi-nor@0 {
+		compatible = "jedec,spi-nor";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		spi-rx-bus-width = <1>;
+		reg = <0>;
+		spi-max-frequency = <5000000>;
+		partitions@A0000000 {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			system1@0 {
+				label = "spi3-system1";
+				reg = <0x0 0x0>;
+			};
+		};
+	};
+};
+
+&fiux {
+	spix-mode;
+};
+
+&ehci1 {
+	status = "okay";
+};
+
+&ehci2 {
+	status = "okay";
+};
+
+&ohci1 {
+        status = "okay";
+};
+
+&sdhci {
+	status = "okay";
+};
+
+&pcie {
+	/* used for e1000e PCI -> AXI window opening */
+	dma-ranges = <0x02000000 0 0x00000000 0x0 0x00000000 0 0x40000000>;
+	npcm-pci-ep-rst = <&gpio3 24 1>;
+	status = "okay";
+};
+
+&pcimbox {
+	status = "okay";
+};
+
+&udc0 {
+	status = "okay";
+};
+
+&udc1 {
+	status = "okay";
+};
+
+&udc2 {
+	status = "okay";
+};
+
+&udc3 {
+	status = "okay";
+};
+
+&udc4 {
+	status = "okay";
+};
+
+&udc5 {
+	status = "okay";
+};
+
+&udc6 {
+	status = "okay";
+};
+
+&udc7 {
+	status = "okay";
+};
+
+&udc8 {
+	status = "okay";
+};
+
+&gcr {
+	udc9_mux: mux-controller {
+		compatible = "mmio-mux";
+		#mux-control-cells = <1>;
+		mux-reg-masks = <0x9C 0x3000>;
+		idle-states = <0x3000>;
+	};
+};
+
+
+&jtm1 {
+	status = "okay";
+};
+
+&jtm2 {
+	status = "okay";
+};
+
+
+&rng {
+	status = "okay";
+};
+
+&watchdog1 {
+	status = "okay";
+};
+
+
+&pspi {
+	cs-gpios = <&gpio0 20 GPIO_ACTIVE_LOW>;
+	status = "okay";
+};
+
+&i2c0 {
+	status = "okay";
+};
+
+&i2c1 {
+	status = "okay";
+};
+
+&i2c2 {
+	status = "okay";
+};
+
+&i2c3 {
+	status = "okay";
+};
+
+&i2c6 {
+	status = "okay";
+};
+
+&i2c8 {
+	status = "okay";
+};
+
+&i2c12 {
+	status = "okay";
+};
+
+&mc {
+	status = "okay";
+};
+
+&pinctrl {
+	pinctrl-names = "default";
+};
+
+&vcd {
+	status = "okay";
+};
+
+&ece {
+	status = "okay";
+};
+
+&tip_mbox {
+	status = "okay";
+};
