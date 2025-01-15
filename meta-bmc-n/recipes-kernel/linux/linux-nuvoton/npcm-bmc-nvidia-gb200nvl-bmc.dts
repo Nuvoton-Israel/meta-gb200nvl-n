@@ -57,17 +57,22 @@
 			<&adc 4>, <&adc 5>, <&adc 6>, <&adc 7>;
 	};
 
-	leds {
-		compatible = "gpio-leds";
-		heartbeat {
-			label = "heartbeat";
-			gpios = <&gpio3 2 GPIO_ACTIVE_HIGH>; /* gpio98 */
-		};
-		identify {
-			label = "identify";
-			gpios = <&gpio1 29 GPIO_ACTIVE_HIGH>; /* gpio61 */
-		};
-	};
+
+    leds {
+        compatible = "gpio-leds";
+        uid_led {
+            gpios = <&gpio1 29 GPIO_ACTIVE_HIGH>;
+        };
+        fault_led {
+                gpios = <&sgpio2 9 GPIO_ACTIVE_LOW>;
+        };
+        power_led {
+            gpios = <&gpio3 2 GPIO_ACTIVE_HIGH>;
+        };
+        bmc_ready_noled {
+            gpios = <&sgpio2 8 GPIO_ACTIVE_LOW>;
+        };
+    };
 
 	refclk: refclk-25mhz {
 		compatible = "fixed-clock";
@@ -165,7 +170,6 @@
 	status = "okay";
 	gpio-line-names =
 		"","","","","","","","",
-		"g_led","","","","","","","",
 		"","","","","","","","",
 		"","","","","","","","",
 		"","","","","","","","",
@@ -173,6 +177,7 @@
 		"","","","","","","","",
 		"","","","","","","","",
 		"","","","","","","","",
+		"STBY_POWER_PG-I","PWR_BTN_L-I","UID_BTN_N-I","","","","","",
 		"","","","","","","","",
 		"","","","","","","","",
 		"","","","","","","","",
@@ -213,11 +218,11 @@
 				};
 			kernel@400000 {
 				label = "kernel";
-				reg = <0x00400000 0x00700000>;
+				reg = <0x00400000 0x00800000>;
 				};
-			rofs@b00000 {
+			rofs@c00000 {
 				label = "rofs";
-				reg = <0x00b00000 0x03500000>;
+				reg = <0x00c00000 0x03400000>;
 				};
 			dummy@4000000 {
 				label = "dummy";
