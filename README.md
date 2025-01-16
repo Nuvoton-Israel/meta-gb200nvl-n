@@ -1,15 +1,21 @@
 # How to build
-1. git clone git@github.com:NVIDIA/openbmc.git nvBMC
-2. cd nvBMC
-3. cd meta-nvidia/meta-prime/meta-graceblackwell/
-4. git clone git@github.com:Nuvoton-Israel/meta-gb200nvl-n.git meta-gb200nvl-n
-5. cd ~/nvBMC
+- git clone git@github.com:NVIDIA/openbmc.git nvBMC
+- cd nvBMC
+- cd meta-nvidia/meta-prime/meta-graceblackwell/
+- git clone git@github.com:Nuvoton-Israel/meta-gb200nvl-n.git meta-gb200nvl-n
+- cd ~/nvBMC
 
 ## bmc target 
-7. . setup gb200nvl-bmc-n
+- . setup gb200nvl-bmc-n
 
 ## hmc target
-8. . setup gb200nvl-hmc-n
+- . setup gb200nvl-hmc-n
 
 ## Build
-10. bitbake obmc-phosphor-image
+-  bitbake obmc-phosphor-image
+
+## First Use
+### Under u-boot, erase the bottom half of the flash for rwfs and log
+- sf erase 0x04000000 0x04000000
+### Under u-boot, erase the emmc to create a new partition table in the openbmc
+- mmc erase 0 0x1000000
