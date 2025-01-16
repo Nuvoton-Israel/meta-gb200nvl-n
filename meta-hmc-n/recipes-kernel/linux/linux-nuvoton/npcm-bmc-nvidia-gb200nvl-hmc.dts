@@ -47,7 +47,7 @@
 
     leds {
         compatible = "gpio-leds";
-        bmc_ready_noled {
+        hmc_ready_noled {
             gpios = <&sgpio2 8 GPIO_ACTIVE_LOW>;
         };
     };
@@ -138,7 +138,7 @@
 		"","","","","","","","",
 		"","","","","","","","",
 		"","","","","","","","",
-		"FPGA0_READY-I","FPGA1_READY-I","","","","","","",
+		"FPGA0_READY-I","FPGA1_READY-I","PS_RUN_PWR_PG-I","HMC_GLOBAL_WP-I","","","","",
 		"","","","","","","","",
 		"","","","","","","","",
 		"","","","","","","","",
@@ -179,11 +179,11 @@
 				};
 			kernel@400000 {
 				label = "kernel";
-				reg = <0x00400000 0x00700000>;
+				reg = <0x00400000 0x00800000>;
 				};
-			rofs@b00000 {
+			rofs@c00000 {
 				label = "rofs";
-				reg = <0x00b00000 0x03500000>;
+				reg = <0x00c00000 0x03400000>;
 				};
 			dummy@4000000 {
 				label = "dummy";
@@ -195,11 +195,10 @@
 				};
 			log@4000000 {
 				label = "log";
-				reg = <0x5000000 0x1000000>;
+				reg = <0x5000000 0x2000000>;
 				};
-
             cfg-env@0 {
-                reg = <0x6000000 0x10000>;            // 128KB at offset 0
+                reg = <0x7000000 0x10000>;            // 128KB at offset 0
                 label = "pciechip_config";
             };
 		};
