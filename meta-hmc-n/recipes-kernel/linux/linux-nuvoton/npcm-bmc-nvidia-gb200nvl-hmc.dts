@@ -45,17 +45,12 @@
 		reg = <0x0 0x0 0x0 0x40000000>;
 	};
 
-	leds {
-		compatible = "gpio-leds";
-		heartbeat {
-			label = "heartbeat";
-			gpios = <&gpio3 2 GPIO_ACTIVE_HIGH>; /* gpio98 */
-		};
-		identify {
-			label = "identify";
-			gpios = <&gpio1 29 GPIO_ACTIVE_HIGH>; /* gpio61 */
-		};
-	};
+    leds {
+        compatible = "gpio-leds";
+        bmc_ready_noled {
+            gpios = <&sgpio2 8 GPIO_ACTIVE_LOW>;
+        };
+    };
 
 	refclk: refclk-25mhz {
 		compatible = "fixed-clock";
@@ -136,7 +131,6 @@
 	status = "okay";
 	gpio-line-names =
 		"","","","","","","","",
-		"g_led","","","","","","","",
 		"","","","","","","","",
 		"","","","","","","","",
 		"","","","","","","","",
@@ -144,6 +138,7 @@
 		"","","","","","","","",
 		"","","","","","","","",
 		"","","","","","","","",
+		"FPGA0_READY-I","FPGA1_READY-I","","","","","","",
 		"","","","","","","","",
 		"","","","","","","","",
 		"","","","","","","","",
