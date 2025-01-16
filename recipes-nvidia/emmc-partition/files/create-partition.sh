@@ -23,14 +23,14 @@ sed -e 's/\s*\([\+0-9a-zA-Z]*\).*/\1/' << EOF | fdisk "/dev/$device1"
 
   n # new partition
   p # primary partition
-  3 # partition number 4
+  3 # partition number3
     # default - start at beginning of disk
   +1G # 1GB user log partition
   p # print the in-memory partition table
 
   n # new partition
   e # extended partition
-  4 # partition number 3
+  4 # partition number 4
     # default - start at beginning of disk
     # default - end of disk
   p # print the in-memory partition table
