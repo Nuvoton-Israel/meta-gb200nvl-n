@@ -25,9 +25,6 @@
 		udc6 = &udc6;
 		udc7 = &udc7;
 		fiu0 = &fiu0;
-		fiu1 = &fiu3;
-		fiu2 = &fiux;
-		fiu3 = &fiu1;
 		i2c0 = &i2c0;
 		i2c1 = &i2c1;
 		i2c2 = &i2c2;
@@ -80,26 +77,6 @@
 		phy0: ethernet-phy@1 {
 		};
 	};
-
-	tip_sram: sram@fffce000 {
-		compatible = "mmio-sram";
-		reg = <0 0xfffce000 0 0x1000>;
-		#address-cells = <1>;
-		#size-cells = <1>;
-		ranges = <0 0 0xfffce000 0x1000>;
-		ch0_shm: ch_shm@0 {
-			reg = <0 0x1000>;
-		};
-	};
-
-	tip {
-		compatible = "nuvoton,cerberus";
-		mboxes = <&tip_mbox 0 16>; /*channel 0, 16th doorbell */
-		mbox-names = "cerberus";
-		shmem = <&ch0_shm>;
-		status = "okay";
-	};
-
 };
 
 &gmac0 {
@@ -154,6 +131,8 @@
 
 &fiu0 {
 	status = "okay";
+	reg = <0x0 0xfb000000 0x0 0x1000>;
+	reg-names = "control";	
 	spi-nor@0 {
 		compatible = "jedec,spi-nor";
 		#address-cells = <1>;
@@ -205,50 +184,6 @@
 	};
 };
 
-&fiu1 {
-	/*pinctrl-0 = <&spi1_pins>, <&spi1quad_pins>;*/
-	status = "okay";
-	spi-nor@0 {
-		compatible = "jedec,spi-nor";
-		#address-cells = <1>;
-		#size-cells = <1>;
-		spi-rx-bus-width = <2>;
-		spi-tx-bus-width = <2>;
-		reg = <0>;
-		spi-max-frequency = <5000000>;
-		partitions@A0000000 {
-			compatible = "fixed-partitions";
-			#address-cells = <1>;
-			#size-cells = <1>;
-			system1@0 {
-				label = "spi1-system1";
-				reg = <0x0 0x0>;
-			};
-		};
-	};
-};
-
-&fiu3 {
-	pinctrl-0 = <&spi3_pins>, <&spi3quad_pins>;
-	status = "okay";
-	spi-nor@0 {
-		compatible = "jedec,spi-nor";
-		#address-cells = <1>;
-		#size-cells = <1>;
-		spi-rx-bus-width = <1>;
-		reg = <0>;
-		spi-max-frequency = <5000000>;
-		partitions@A0000000 {
-			compatible = "fixed-partitions";
-			#address-cells = <1>;
-			#size-cells = <1>;
-			system1@0 {
-				label = "spi3-system1";
-				reg = <0x0 0x0>;
-			};
-		};
-	};
-};
 
 &fiux {
 	spix-mode;
@@ -391,9 +326,5 @@
 };
 
 &ece {
-	status = "okay";
-};
-
-&tip_mbox {
 	status = "okay";
 };
