@@ -16,6 +16,11 @@
 
 ## First Use
 ### Under u-boot, erase the bottom half of the flash for rwfs and log
+#### BMC
+- sf probe 0:0
+- sf erase 0x4C00000 0x03400000
+#### HMC
+- sf probe 0:0
 - sf erase 0x04000000 0x04000000
 ### Under u-boot, erase the emmc to create a new partition table in the openbmc
 - mmc erase 0 0x1000000
