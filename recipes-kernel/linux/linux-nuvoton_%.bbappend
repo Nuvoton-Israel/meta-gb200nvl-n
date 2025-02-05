@@ -2,7 +2,7 @@
 # with specifics of our Git repo, branch names, and Linux version
 #
 LINUX_VERSION = "6.6.58"
-SRCREV="c0e89f5f7ef7c9053922055c24211bbcfd033fee"
+SRCREV="dd2dd05d0ca967174db5e7c84fb6dd0b0389de3b"
 KSRC = "git://github.com/NVIDIA/linux;protocol=https;branch=develop-6.6"
 # From 5.10+ the COPYING file changed
 LIC_FILES_CHKSUM = "file://COPYING;md5=6bc538ed5bd9a7fc9398086aedcd7e46"
@@ -35,12 +35,14 @@ SRC_URI:append = " file://1231-usb-chipidea-add-SRAM-allocation-support.patch"
 
 # NPCM8XX i2c driver
 SRC_URI:append = " file://1240-i2c-npcm-disable-interrupt-enable-bit-before-devm_re.patch"
-SRC_URI:append = " file://1241-i2c-npcm-use-i2c-frequency-table.patch"
-SRC_URI:append = " file://1242-i2c-npcm-use-a-software-flag-to-indicate-a-BER-condi.patch"
-SRC_URI:append = " file://1243-i2c-npcm-Modify-timeout-evaluation-mechanism.patch"
-SRC_URI:append = " file://1244-i2c-npcm-Modify-the-client-address-assignment.patch"
-SRC_URI:append = " file://1245-i2c-npcm7xx.c-Enable-slave-in-eob-interrupt.patch"
-SRC_URI:append = " file://1246-i2c-npcm-correct-the-read-write-operation-procedure.patch"
+SRC_URI:append = " file://1241-i2c-Remove-redundant-comparison-in-npcm_i2c_reg_slav.patch"
+SRC_URI:append = " file://1242-i2c-npcm-restore-slave-addresses-array-length.patch"
+SRC_URI:append = " file://1243-i2c-npcm-correct-the-read-write-operation-procedure.patch"
+SRC_URI:append = " file://1244-i2c-npcm-use-a-software-flag-to-indicate-a-BER-condi.patch"
+SRC_URI:append = " file://1245-i2c-npcm-Modify-timeout-evaluation-mechanism.patch"
+SRC_URI:append = " file://1246-i2c-npcm-Assign-client-address-earlier-for-i2c_recov.patch"
+SRC_URI:append = " file://1247-i2c-npcm-use-i2c-frequency-table.patch"
+SRC_URI:append = " file://1248-i2c-npcm-Enable-slave-in-eob-interrupt.patch"
 
 # NPCM8XX PCEI driver
 SRC_URI:append = " file://1260-pci-npcm-Add-NPCM-PCIe-RC-driver.patch"

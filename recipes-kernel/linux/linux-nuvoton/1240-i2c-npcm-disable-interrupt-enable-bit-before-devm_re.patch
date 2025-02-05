@@ -72,9 +72,7 @@ Here is the soft lockup log.
 [   28.418412] CPU features: 0x00000000,00000802
 [   28.427644] Rebooting in 20 seconds..
 
-This change was pushed upstream and under reviewing:
-https://lore.kernel.org/all/20240709105412.1685181-1-tmaimon77@gmail.com/
-
+Upstream-Status: Submitted [https://lore.kernel.org/all/20240709105412.1685181-1-tmaimon77@gmail.com/]
 Signed-off-by: Tyrone Ting <kfting@nuvoton.com>
 ---
  drivers/i2c/busses/i2c-npcm7xx.c | 2 ++
