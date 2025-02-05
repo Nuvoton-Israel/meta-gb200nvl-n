@@ -78,3 +78,7 @@ SRC_URI:append = " file://1311-net-ethernet-stmmac-add-sgmii-support.patch"
 
 # NPCM8XX media driver
 SRC_URI:append = " file://1320-media-nuvoton-Add-head1-hsync-support.patch"
+
+# NPCM8XX pinctrl driver
+SRC_URI:append = " file://1330-pinctrl-npcm8xx-remove-CTS-and-RTS-pins-from-bmcuart.patch"
+SRC_URI:append = " file://1331-driver-pinctrl-npcm8xx-Set-strict-as-true.patch"
