@@ -1,0 +1,26 @@
+From 99af254490180e82d73767441a377cc3f25eb353 Mon Sep 17 00:00:00 2001
+From: Joseph Liu <kwliu@nuvoton.com>
+Date: Wed, 26 Feb 2025 16:52:44 +0800
+Subject: [PATCH] increase mctp pkt buffer size
+
+Signed-off-by: Joseph Liu <kwliu@nuvoton.com>
+---
+ alloc.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/alloc.c b/alloc.c
+index c413752..490ca47 100644
+--- a/alloc.c
++++ b/alloc.c
+@@ -17,7 +17,7 @@ mctp_pktbuf->size = 24 + mctp_pktbuf->data[] = 83
+ mctp_pktbuf->data[] = medium_header+ mctp_header+ mctp_payload+ mctp_trailer 
+ medium_header = 12(taking max for pcie) + mctp_header = 4 + mctp_payload = 64
+ + mctp_trailer = 3 (taking max for pcie) == 83 */
+-#define MCTP_PACKET_BUFFER_SIZE 107
++#define MCTP_PACKET_BUFFER_SIZE 0x1000
+ 
+ struct mctp_memory_pool {
+ 	void *buffers[MCTP_POOL_SIZE];
+-- 
+2.43.0
+
