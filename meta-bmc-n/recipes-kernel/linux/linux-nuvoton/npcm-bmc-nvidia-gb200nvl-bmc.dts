@@ -180,11 +180,11 @@
 				};
 			u-boot@0 {
 				label = "u-boot";
-				reg = <0x00000000 0x003c0000>;
+				reg = <0x00000000 0x003C0000>;
 				};
 			u-boot-env@3c0000 {
 				label = "u-boot-env";
-				reg = <0x003c0000 0x00040000>;
+				reg = <0x003C0000 0x00040000>;
 				};
 			kernel@400000 {
 				label = "kernel";
@@ -192,19 +192,19 @@
 				};
 			rofs@c00000 {
 				label = "rofs";
-				reg = <0x00c00000 0x04000000>;
+				reg = <0x00c00000 0x03400000>;
 				};
-			dummy@4c00000 {
+			dummy@4000000 {
 				label = "dummy";
-				reg = <0x4c00000 0x1000000>;
+				reg = <0x4000000 0x1000000>;
 				};
-			rwfs@4c00000 {
+			rwfs@4000000 {
 				label = "rwfs";
-				reg = <0x4c00000 0x1000000>;
+				reg = <0x4000000 0x1000000>;
 				};
-			log@0x5c00000 {
+			log@4000000 {
 				label = "log";
-				reg = <0x5c00000 0x2000000>;
+				reg = <0x5000000 0x2000000>;
 				};
 		};
 	};

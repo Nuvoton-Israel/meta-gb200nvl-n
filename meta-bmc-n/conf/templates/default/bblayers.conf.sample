@@ -16,7 +16,6 @@ BBLAYERS ?= " \
   ##OEROOT##/meta-arm/meta-arm \
   ##OEROOT##/meta-arm/meta-arm-toolchain \
   ##OEROOT##/meta-arm/meta-arm-bsp \
-  ##OEROOT##/meta-aspeed \
   ##OEROOT##/meta-nuvoton \
   ##OEROOT##/meta-nvidia \
   ##OEROOT##/meta-nvidia/meta-prime \
@@ -39,7 +38,6 @@ BBLAYERS_NON_REMOVABLE ?= " \
   ##OEROOT##/meta-arm/meta-arm \
   ##OEROOT##/meta-arm/meta-arm-toolchain \
   ##OEROOT##/meta-arm/meta-arm-bsp \
-  ##OEROOT##/meta-aspeed \
   ##OEROOT##/meta-nuvoton \
   ##OEROOT##/meta-nvidia \
   ##OEROOT##/meta-nvidia/meta-prime \
