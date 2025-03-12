@@ -1,7 +1,4 @@
-
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
-
-SRC_URI:append = " file://0001-increase-mctp-pkt-buffer-size.patch"
 
 SYSTEMD_SERVICE:${PN}:remove = " mctp-spi0-ctrl.service \
                                  mctp-spi0-demux.service \
