@@ -362,13 +362,6 @@
 
 &i2c0 {
 	status = "okay";
-    ssif-bmc@10 {
-        compatible = "ssif-bmc";
-        alert-gpio = <&gpio0 39 GPIO_ACTIVE_LOW>;
-        pulse_width_us = <5>;
-        timeout_ms = <4995>;
-        reg = <0x10>;
-    };
 };
 
 &i2c1 {
