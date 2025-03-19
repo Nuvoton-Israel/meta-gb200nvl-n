@@ -44,6 +44,9 @@ SRC_URI:append = " file://1246-i2c-npcm-Assign-client-address-earlier-for-i2c_re
 SRC_URI:append = " file://1247-i2c-npcm-use-i2c-frequency-table.patch"
 SRC_URI:append = " file://1248-i2c-npcm-Enable-slave-in-eob-interrupt.patch"
 
+# NPCM8XX i3c driver
+SRC_URI:append = " file://1250-i3c-sync-latest-svc-i3c-driver-and-header.patch"
+
 # NPCM8XX PCEI driver
 SRC_URI:append = " file://1260-pci-npcm-Add-NPCM-PCIe-RC-driver.patch"
 

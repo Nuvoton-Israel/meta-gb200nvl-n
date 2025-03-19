@@ -1,0 +1,26 @@
+From c2d73a41f479666fb2332170845dbcf4223a3817 Mon Sep 17 00:00:00 2001
+From: Marvin Lin <milkfafa@gmail.com>
+Date: Wed, 5 Mar 2025 09:16:10 +0800
+Subject: [PATCH] uboot gb200nvl scm dts
+
+---
+ arch/arm/dts/Makefile | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/dts/Makefile b/arch/arm/dts/Makefile
+index 95016532af..5a2a5b0ab3 100644
+--- a/arch/arm/dts/Makefile
++++ b/arch/arm/dts/Makefile
+@@ -1376,7 +1376,8 @@ dtb-$(CONFIG_ARCH_NPCM7xx) += \
+ 	nuvoton-npcm750-olympus.dtb
+ dtb-$(CONFIG_ARCH_NPCM8XX) += \
+ 	nuvoton-npcm845-evb.dtb \
+-	nuvoton-npcm845-yosemite4.dtb
++	nuvoton-npcm845-yosemite4.dtb \
++	nuvoton-npcm845-gb200nvl-scm.dtb
+ 
+ dtb-$(CONFIG_XEN) += xenguest-arm64.dtb
+ 
+-- 
+2.34.1
+

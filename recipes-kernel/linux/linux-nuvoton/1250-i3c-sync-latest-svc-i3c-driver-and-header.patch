@@ -1,0 +1,5871 @@
+From 1454c309cb414e95f95b334c247d82e6f1049cf0 Mon Sep 17 00:00:00 2001
+From: Marvin Lin <milkfafa@gmail.com>
+Date: Mon, 17 Mar 2025 15:40:25 +0800
+Subject: [PATCH] i3c: sync latest i3c driver and header
+
+---
+ drivers/i3c/Kconfig                 |   25 +
+ drivers/i3c/Makefile                |    3 +
+ drivers/i3c/device.c                |  161 +++
+ drivers/i3c/i3c-hub.c               |  889 +++++++++++++++
+ drivers/i3c/i3cdev.c                |  435 +++++++
+ drivers/i3c/internals.h             |   12 +
+ drivers/i3c/master.c                |  493 +++++++-
+ drivers/i3c/master/svc-i3c-master.c | 1633 ++++++++++++++++++++++-----
+ drivers/i3c/mctp/Kconfig            |   14 +
+ drivers/i3c/mctp/Makefile           |    3 +
+ drivers/i3c/mctp/i3c-mctp.c         |  624 ++++++++++
+ drivers/i3c/mctp/i3c-target-mctp.c  |  389 +++++++
+ include/linux/i3c/ccc.h             |   11 +
+ include/linux/i3c/device.h          |   17 +
+ include/linux/i3c/master.h          |   24 +
+ include/linux/i3c/mctp/i3c-mctp.h   |   50 +
+ include/linux/i3c/target.h          |   23 +
+ include/uapi/linux/i3c/i3cdev.h     |   38 +
+ 18 files changed, 4565 insertions(+), 279 deletions(-)
+ create mode 100644 drivers/i3c/i3c-hub.c
+ create mode 100644 drivers/i3c/i3cdev.c
+ create mode 100644 drivers/i3c/mctp/Kconfig
+ create mode 100644 drivers/i3c/mctp/Makefile
+ create mode 100644 drivers/i3c/mctp/i3c-mctp.c
+ create mode 100644 drivers/i3c/mctp/i3c-target-mctp.c
+ create mode 100644 include/linux/i3c/mctp/i3c-mctp.h
+ create mode 100644 include/linux/i3c/target.h
+ create mode 100644 include/uapi/linux/i3c/i3cdev.h
+
+diff --git a/drivers/i3c/Kconfig b/drivers/i3c/Kconfig
+index 30a441506f61..fd0bf9a42ba7 100644
+--- a/drivers/i3c/Kconfig
++++ b/drivers/i3c/Kconfig
+@@ -20,5 +20,30 @@ menuconfig I3C
+ 	  will be called i3c.
+ 
+ if I3C
++
++source "drivers/i3c/mctp/Kconfig"
++
++config I3CDEV
++	tristate "I3C device interface"
++	depends on I3C
++	help
++	  Say Y here to use i3c-* device files, usually found in the /dev
++	  directory on your system.  They make it possible to have user-space
++	  programs use the I3C devices.
++
++	  This support is also available as a module.  If so, the module
++	  will be called i3cdev.
++
++	  Note that this application programming interface is EXPERIMENTAL
++	  and hence SUBJECT TO CHANGE WITHOUT NOTICE while it stabilizes.
++
++config I3C_HUB
++	tristate "I3C HUB support"
++	depends on I3C
++	select REGMAP_I3C
++	help
++	  This enables support for I3C HUB. Say Y here to use I3C HUB driver to
++	  configure I3C HUB device.
++
+ source "drivers/i3c/master/Kconfig"
+ endif # I3C
+diff --git a/drivers/i3c/Makefile b/drivers/i3c/Makefile
+index 11982efbc6d9..335f539ed001 100644
+--- a/drivers/i3c/Makefile
++++ b/drivers/i3c/Makefile
+@@ -1,4 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ i3c-y				:= device.o master.o
+ obj-$(CONFIG_I3C)		+= i3c.o
++obj-$(CONFIG_I3CDEV)		+= i3cdev.o
+ obj-$(CONFIG_I3C)		+= master/
++obj-$(CONFIG_I3C)		+= mctp/
++obj-$(CONFIG_I3C_HUB)		+= i3c-hub.o
+diff --git a/drivers/i3c/device.c b/drivers/i3c/device.c
+index 1a6a8703dbc3..903f7c37cdf6 100644
+--- a/drivers/i3c/device.c
++++ b/drivers/i3c/device.c
+@@ -70,6 +70,29 @@ int i3c_device_do_setdasa(struct i3c_device *dev)
+ }
+ EXPORT_SYMBOL_GPL(i3c_device_do_setdasa);
+ 
++/**
++ * i3c_device_generate_ibi() - request In-Band Interrupt
++ *
++ * @dev: target device
++ * @data: IBI payload
++ * @len: payload length in bytes
++ *
++ * Request In-Band Interrupt with or without data payload.
++ *
++ * Return: 0 in case of success, a negative error code otherwise.
++ */
++int i3c_device_generate_ibi(struct i3c_device *dev, const u8 *data, int len)
++{
++	int ret;
++
++	i3c_bus_normaluse_lock(dev->bus);
++	ret = i3c_dev_generate_ibi_locked(dev->desc, data, len);
++	i3c_bus_normaluse_unlock(dev->bus);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(i3c_device_generate_ibi);
++
+ /**
+  * i3c_device_get_info() - get I3C device information
+  *
+@@ -196,6 +219,20 @@ void i3c_device_free_ibi(struct i3c_device *dev)
+ }
+ EXPORT_SYMBOL_GPL(i3c_device_free_ibi);
+ 
++int i3c_device_send_ccc_cmd(struct i3c_device *dev, u8 ccc_id)
++{
++	int ret;
++
++	if (dev->desc) {
++		i3c_bus_normaluse_lock(dev->bus);
++		ret = i3c_dev_send_ccc_cmd_locked(dev->desc, ccc_id);
++		i3c_bus_normaluse_unlock(dev->bus);
++	}
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(i3c_device_send_ccc_cmd);
++
+ /**
+  * i3cdev_to_dev() - Returns the device embedded in @i3cdev
+  * @i3cdev: I3C device
+@@ -291,3 +328,127 @@ void i3c_driver_unregister(struct i3c_driver *drv)
+ 	driver_unregister(&drv->driver);
+ }
+ EXPORT_SYMBOL_GPL(i3c_driver_unregister);
++
++/**
++ * i3c_device_getstatus_ccc() - receive device status
++ *
++ * @dev: I3C device to get the status for
++ * @info: I3C device info to fill the status in
++ *
++ * Receive I3C device status from I3C master device via corresponding CCC
++ * command
++ *
++ * Return: 0 in case of success, a negative error code otherwise.
++ */
++int i3c_device_getstatus_ccc(struct i3c_device *dev, struct i3c_device_info *info)
++{
++	int ret = -EINVAL;
++
++	i3c_bus_normaluse_lock(dev->bus);
++	if (dev->desc)
++		ret = i3c_dev_getstatus_locked(dev->desc, info);
++	i3c_bus_normaluse_unlock(dev->bus);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(i3c_device_getstatus_ccc);
++
++/**
++ * i3c_device_setmrl_ccc() - set maximum read length
++ *
++ * @dev: I3C device to set the length for
++ * @info: I3C device info to fill the length in
++ * @read_len: maximum read length value to be set
++ * @ibi_len: maximum ibi payload length to be set
++ *
++ * Set I3C device maximum read length from I3C master device via corresponding CCC command
++ *
++ * Return: 0 in case of success, a negative error code otherwise.
++ */
++int i3c_device_setmrl_ccc(struct i3c_device *dev, struct i3c_device_info *info, __be16 read_len,
++			  u8 ibi_len)
++{
++	struct i3c_master_controller *master = i3c_dev_get_master(dev->desc);
++	int ret = -EINVAL;
++
++	i3c_bus_normaluse_lock(dev->bus);
++	if (master)
++		ret = i3c_master_setmrl_locked(master, info, read_len, ibi_len);
++	i3c_bus_normaluse_unlock(dev->bus);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(i3c_device_setmrl_ccc);
++
++/**
++ * i3c_device_setmwl_ccc() - set maximum write length
++ *
++ * @dev: I3C device to set the length for
++ * @info: I3C device info to fill the length in
++ * @write_len: maximum write length value to be set
++ *
++ * Set I3C device maximum write length from I3C master device via corresponding CCC command
++ *
++ * Return: 0 in case of success, a negative error code otherwise.
++ */
++int i3c_device_setmwl_ccc(struct i3c_device *dev, struct i3c_device_info *info, __be16 write_len)
++{
++	struct i3c_master_controller *master = i3c_dev_get_master(dev->desc);
++	int ret = -EINVAL;
++
++	i3c_bus_normaluse_lock(dev->bus);
++	if (master)
++		ret = i3c_master_setmwl_locked(master, info, write_len);
++	i3c_bus_normaluse_unlock(dev->bus);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(i3c_device_setmwl_ccc);
++
++/**
++ * i3c_device_getmrl_ccc() - get maximum read length
++ *
++ * @dev: I3C device to get the length for
++ * @info: I3C device info to fill the length in
++ *
++ * Receive I3C device maximum read length from I3C master device via corresponding CCC command
++ *
++ * Return: 0 in case of success, a negative error code otherwise.
++ */
++int i3c_device_getmrl_ccc(struct i3c_device *dev, struct i3c_device_info *info)
++{
++	struct i3c_master_controller *master = i3c_dev_get_master(dev->desc);
++	int ret = -EINVAL;
++
++	i3c_bus_normaluse_lock(dev->bus);
++	if (master)
++		ret = i3c_master_getmrl_locked(master, info);
++	i3c_bus_normaluse_unlock(dev->bus);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(i3c_device_getmrl_ccc);
++
++/**
++ * i3c_device_getmwl_ccc() - get maximum write length
++ *
++ * @dev: I3C device to get the length for
++ * @info: I3C device info to fill the length in
++ *
++ * Receive I3C device maximum write length from I3C master device via corresponding CCC command
++ *
++ * Return: 0 in case of success, a negative error code otherwise.
++ */
++int i3c_device_getmwl_ccc(struct i3c_device *dev, struct i3c_device_info *info)
++{
++	struct i3c_master_controller *master = i3c_dev_get_master(dev->desc);
++	int ret = -EINVAL;
++
++	i3c_bus_normaluse_lock(dev->bus);
++	if (master)
++		ret = i3c_master_getmwl_locked(master, info);
++	i3c_bus_normaluse_unlock(dev->bus);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(i3c_device_getmwl_ccc);
+diff --git a/drivers/i3c/i3c-hub.c b/drivers/i3c/i3c-hub.c
+new file mode 100644
+index 000000000000..48e5eb733fb6
+--- /dev/null
++++ b/drivers/i3c/i3c-hub.c
+@@ -0,0 +1,889 @@
++// SPDX-License-Identifier: GPL-2.0
++/* Copyright (C) 2021 Intel Corporation.*/
++
++#include <linux/bitfield.h>
++#include <linux/debugfs.h>
++#include <linux/module.h>
++#include <linux/property.h>
++#include <linux/regmap.h>
++
++#include <linux/i3c/device.h>
++#include <linux/i3c/master.h>
++
++#define I3C_HUB_TP_MAX_COUNT				0x08
++
++/* I3C HUB REGISTERS */
++
++/*
++ * In this driver Controller - Target convention is used. All the abbreviations are
++ * based on this convention. For instance: CP - Controller Port, TP - Target Port.
++ */
++
++/* Device Information Registers */
++#define I3C_HUB_DEV_INFO_0				0x00
++#define I3C_HUB_DEV_INFO_1				0x01
++#define I3C_HUB_PID_5					0x02
++#define I3C_HUB_PID_4					0x03
++#define I3C_HUB_PID_3					0x04
++#define I3C_HUB_PID_2					0x05
++#define I3C_HUB_PID_1					0x06
++#define I3C_HUB_PID_0					0x07
++#define I3C_HUB_BCR					0x08
++#define I3C_HUB_DCR					0x09
++#define I3C_HUB_DEV_CAPAB				0x0A
++#define I3C_HUB_DEV_REV					0x0B
++
++/* Device Configuration Registers */
++#define I3C_HUB_PROTECTION_CODE				0x10
++#define  REGISTERS_LOCK_CODE				0x00
++#define  REGISTERS_UNLOCK_CODE				0x69
++#define  CP1_REGISTERS_UNLOCK_CODE			0x6A
++
++#define I3C_HUB_CP_CONF					0x11
++#define I3C_HUB_TP_ENABLE				0x12
++#define  TPn_ENABLE(n)					BIT(n)
++
++#define I3C_HUB_DEV_CONF				0x13
++#define I3C_HUB_IO_STRENGTH				0x14
++#define  TP0145_IO_STRENGTH_MASK			GENMASK(1, 0)
++#define  TP0145_IO_STRENGTH(x)				(((x) << 0) & TP0145_IO_STRENGTH_MASK)
++#define  TP2367_IO_STRENGTH_MASK			GENMASK(3, 2)
++#define  TP2367_IO_STRENGTH(x)				(((x) << 2) & TP2367_IO_STRENGTH_MASK)
++#define  CP0_IO_STRENGTH_MASK				GENMASK(5, 4)
++#define  CP0_IO_STRENGTH(x)				(((x) << 4) & CP0_IO_STRENGTH_MASK)
++#define  CP1_IO_STRENGTH_MASK				GENMASK(7, 6)
++#define  CP1_IO_STRENGTH(x)				(((x) << 6) & CP1_IO_STRENGTH_MASK)
++#define  IO_STRENGTH_20_OHM				0x00
++#define  IO_STRENGTH_30_OHM				0x01
++#define  IO_STRENGTH_40_OHM				0x02
++#define  IO_STRENGTH_50_OHM				0x03
++
++#define I3C_HUB_NET_OPER_MODE_CONF			0x15
++#define I3C_HUB_LDO_CONF				0x16
++#define  CP0_LDO_VOLTAGE_MASK				GENMASK(1, 0)
++#define  CP0_LDO_VOLTAGE(x)				(((x) << 0) & CP0_LDO_VOLTAGE_MASK)
++#define  CP1_LDO_VOLTAGE_MASK				GENMASK(3, 2)
++#define  CP1_LDO_VOLTAGE(x)				(((x) << 2) & CP1_LDO_VOLTAGE_MASK)
++#define  TP0145_LDO_VOLTAGE_MASK			GENMASK(5, 4)
++#define  TP0145_LDO_VOLTAGE(x)				(((x) << 4) & TP0145_LDO_VOLTAGE_MASK)
++#define  TP2367_LDO_VOLTAGE_MASK			GENMASK(7, 6)
++#define  TP2367_LDO_VOLTAGE(x)				(((x) << 6) & TP2367_LDO_VOLTAGE_MASK)
++#define  LDO_VOLTAGE_1_0V				0x00
++#define  LDO_VOLTAGE_1_1V				0x01
++#define  LDO_VOLTAGE_1_2V				0x02
++#define  LDO_VOLTAGE_1_8V				0x03
++
++#define I3C_HUB_TP_IO_MODE_CONF				0x17
++#define I3C_HUB_TP_SMBUS_AGNT_EN			0x18
++#define  TPn_SMBUS_MODE_EN(n)				BIT(n)
++
++#define I3C_HUB_LDO_AND_PULLUP_CONF			0x19
++#define  CP0_LDO_EN					BIT(0)
++#define  CP1_LDO_EN					BIT(1)
++/*
++ * I3C HUB does not provide a way to control LDO or pull-up for individual ports. It is possible
++ * for group of ports TP0/TP1/TP4/TP5 and TP2/TP3/TP6/TP7.
++ */
++#define  TP0145_LDO_EN					BIT(2)
++#define  TP2367_LDO_EN					BIT(3)
++#define  TP0145_PULLUP_CONF_MASK			GENMASK(7, 6)
++#define  TP0145_PULLUP_CONF(x)				(((x) << 6) & TP0145_PULLUP_CONF_MASK)
++#define  TP2367_PULLUP_CONF_MASK			GENMASK(5, 4)
++#define  TP2367_PULLUP_CONF(x)				(((x) << 4) & TP2367_PULLUP_CONF_MASK)
++#define  PULLUP_250R					0x00
++#define  PULLUP_500R					0x01
++#define  PULLUP_1K					0x02
++#define  PULLUP_2K					0x03
++
++#define I3C_HUB_CP_IBI_CONF				0x1A
++#define I3C_HUB_TP_IBI_CONF				0x1B
++#define I3C_HUB_IBI_MDB_CUSTOM				0x1C
++#define I3C_HUB_JEDEC_CONTEXT_ID			0x1D
++#define I3C_HUB_TP_GPIO_MODE_EN				0x1E
++#define  TPn_GPIO_MODE_EN(n)				BIT(n)
++
++/* Device Status and IBI Registers */
++#define I3C_HUB_DEV_AND_IBI_STS				0x20
++#define I3C_HUB_TP_SMBUS_AGNT_IBI_STS			0x21
++
++/* Controller Port Control/Status Registers */
++#define I3C_HUB_CP_MUX_SET				0x38
++#define I3C_HUB_CP_MUX_STS				0x39
++
++/* Target Ports Control Registers */
++#define I3C_HUB_TP_SMBUS_AGNT_TRANS_START		0x50
++#define I3C_HUB_TP_NET_CON_CONF				0x51
++#define  TPn_NET_CON(n)					BIT(n)
++
++#define I3C_HUB_TP_PULLUP_EN				0x53
++#define  TPn_PULLUP_EN(n)				BIT(n)
++
++#define I3C_HUB_TP_SCL_OUT_EN				0x54
++#define I3C_HUB_TP_SDA_OUT_EN				0x55
++#define I3C_HUB_TP_SCL_OUT_LEVEL			0x56
++#define I3C_HUB_TP_SDA_OUT_LEVEL			0x57
++#define I3C_HUB_TP_IN_DETECT_MODE_CONF			0x58
++#define I3C_HUB_TP_SCL_IN_DETECT_IBI_EN			0x59
++#define I3C_HUB_TP_SDA_IN_DETECT_IBI_EN			0x5A
++
++/* Target Ports Status Registers */
++#define I3C_HUB_TP_SCL_IN_LEVEL_STS			0x60
++#define I3C_HUB_TP_SDA_IN_LEVEL_STS			0x61
++#define I3C_HUB_TP_SCL_IN_DETECT_FLG			0x62
++#define I3C_HUB_TP_SDA_IN_DETECT_FLG			0x63
++
++/* SMBus Agent Configuration and Status Registers */
++#define I3C_HUB_TP0_SMBUS_AGNT_STS			0x64
++#define I3C_HUB_TP1_SMBUS_AGNT_STS			0x65
++#define I3C_HUB_TP2_SMBUS_AGNT_STS			0x66
++#define I3C_HUB_TP3_SMBUS_AGNT_STS			0x67
++#define I3C_HUB_TP4_SMBUS_AGNT_STS			0x68
++#define I3C_HUB_TP5_SMBUS_AGNT_STS			0x69
++#define I3C_HUB_TP6_SMBUS_AGNT_STS			0x6A
++#define I3C_HUB_TP7_SMBUS_AGNT_STS			0x6B
++#define I3C_HUB_ONCHIP_TD_AND_SMBUS_AGNT_CONF		0x6C
++
++/* Special Function Registers */
++#define I3C_HUB_LDO_AND_CPSEL_STS			0x79
++#define I3C_HUB_BUS_RESET_SCL_TIMEOUT			0x7A
++#define I3C_HUB_ONCHIP_TD_PROTO_ERR_FLG			0x7B
++#define I3C_HUB_DEV_CMD					0x7C
++#define I3C_HUB_ONCHIP_TD_STS				0x7D
++#define I3C_HUB_ONCHIP_TD_ADDR_CONF			0x7E
++#define I3C_HUB_PAGE_PTR				0x7F
++
++/* LDO DT settings */
++#define I3C_HUB_DT_LDO_DISABLED				0x00
++#define I3C_HUB_DT_LDO_1_0V				0x01
++#define I3C_HUB_DT_LDO_1_1V				0x02
++#define I3C_HUB_DT_LDO_1_2V				0x03
++#define I3C_HUB_DT_LDO_1_8V				0x04
++#define I3C_HUB_DT_LDO_NOT_DEFINED			0xFF
++
++/* Pull-up DT settings */
++#define I3C_HUB_DT_PULLUP_DISABLED			0x00
++#define I3C_HUB_DT_PULLUP_250R				0x01
++#define I3C_HUB_DT_PULLUP_500R				0x02
++#define I3C_HUB_DT_PULLUP_1K				0x03
++#define I3C_HUB_DT_PULLUP_2K				0x04
++#define I3C_HUB_DT_PULLUP_NOT_DEFINED			0xFF
++
++/* TP DT setting */
++#define I3C_HUB_DT_TP_MODE_DISABLED			0x00
++#define I3C_HUB_DT_TP_MODE_I3C				0x01
++#define I3C_HUB_DT_TP_MODE_I3C_PERF			0x02
++#define I3C_HUB_DT_TP_MODE_SMBUS			0x03
++#define I3C_HUB_DT_TP_MODE_GPIO				0x04
++#define I3C_HUB_DT_TP_MODE_NOT_DEFINED			0xFF
++
++/* TP pull-up status */
++#define I3C_HUB_DT_TP_PULLUP_DISABLED			0x00
++#define I3C_HUB_DT_TP_PULLUP_ENABLED			0x01
++#define I3C_HUB_DT_TP_PULLUP_NOT_DEFINED		0xFF
++
++/* CP/TP IO strength */
++#define I3C_HUB_DT_IO_STRENGTH_20_OHM			0x00
++#define I3C_HUB_DT_IO_STRENGTH_30_OHM			0x01
++#define I3C_HUB_DT_IO_STRENGTH_40_OHM			0x02
++#define I3C_HUB_DT_IO_STRENGTH_50_OHM			0x03
++#define I3C_HUB_DT_IO_STRENGTH_NOT_DEFINED		0xFF
++
++/* TP connection setting */
++#define I3C_HUB_DT_TP_CONNECT_ENABLED			0x00
++#define I3C_HUB_DT_TP_CONNECT_DISABLED			0x01
++
++struct tp_setting {
++	u8 mode;
++	u8 pullup_en;
++	u8 connect;
++};
++
++struct dt_settings {
++	u8 cp0_ldo;
++	u8 cp1_ldo;
++	u8 tp0145_ldo;
++	u8 tp2367_ldo;
++	u8 tp0145_pullup;
++	u8 tp2367_pullup;
++	u8 cp0_io_strength;
++	u8 cp1_io_strength;
++	u8 tp0145_io_strength;
++	u8 tp2367_io_strength;
++	struct tp_setting tp[I3C_HUB_TP_MAX_COUNT];
++};
++
++struct i3c_hub {
++	struct i3c_device *i3cdev;
++	struct regmap *regmap;
++	struct dt_settings settings;
++
++	/* Offset for reading HUB's register. */
++	u8 reg_addr;
++	struct dentry *debug_dir;
++};
++
++struct hub_setting {
++	const char * const name;
++	const u8 value;
++};
++
++static const struct hub_setting ldo_settings[] = {
++	{"disabled",	I3C_HUB_DT_LDO_DISABLED},
++	{"1.0V",	I3C_HUB_DT_LDO_1_0V},
++	{"1.1V",	I3C_HUB_DT_LDO_1_1V},
++	{"1.2V",	I3C_HUB_DT_LDO_1_2V},
++	{"1.8V",	I3C_HUB_DT_LDO_1_8V},
++};
++
++static const struct hub_setting pullup_settings[] = {
++	{"disabled",	I3C_HUB_DT_PULLUP_DISABLED},
++	{"250R",	I3C_HUB_DT_PULLUP_250R},
++	{"500R",	I3C_HUB_DT_PULLUP_500R},
++	{"1k",		I3C_HUB_DT_PULLUP_1K},
++	{"2k",		I3C_HUB_DT_PULLUP_2K},
++};
++
++static const struct hub_setting tp_mode_settings[] = {
++	{"disabled",	I3C_HUB_DT_TP_MODE_DISABLED},
++	{"i3c",		I3C_HUB_DT_TP_MODE_I3C},
++	{"i3c-perf",	I3C_HUB_DT_TP_MODE_I3C_PERF},
++	{"smbus",	I3C_HUB_DT_TP_MODE_SMBUS},
++	{"gpio",	I3C_HUB_DT_TP_MODE_GPIO},
++};
++
++static const struct hub_setting tp_pullup_settings[] = {
++	{"disabled",	I3C_HUB_DT_TP_PULLUP_DISABLED},
++	{"enabled",	I3C_HUB_DT_TP_PULLUP_ENABLED},
++};
++
++static const struct hub_setting io_strength_settings[] = {
++	{ "20Ohms",	I3C_HUB_DT_IO_STRENGTH_20_OHM },
++	{ "30Ohms",	I3C_HUB_DT_IO_STRENGTH_30_OHM },
++	{ "40Ohms",	I3C_HUB_DT_IO_STRENGTH_40_OHM },
++	{ "50Ohms",	I3C_HUB_DT_IO_STRENGTH_50_OHM },
++};
++static const struct hub_setting tp_connect_settings[] = {
++	{"disabled",	I3C_HUB_DT_TP_CONNECT_DISABLED},
++	{"enabled",	I3C_HUB_DT_TP_CONNECT_ENABLED},
++};
++
++static u8 i3c_hub_ldo_dt_to_reg(u8 dt_value)
++{
++	switch (dt_value) {
++	case I3C_HUB_DT_LDO_1_1V:
++		return LDO_VOLTAGE_1_1V;
++	case I3C_HUB_DT_LDO_1_2V:
++		return LDO_VOLTAGE_1_2V;
++	case I3C_HUB_DT_LDO_1_8V:
++		return LDO_VOLTAGE_1_8V;
++	default:
++		return LDO_VOLTAGE_1_0V;
++	}
++}
++
++static u8 i3c_hub_pullup_dt_to_reg(u8 dt_value)
++{
++	switch (dt_value) {
++	case I3C_HUB_DT_PULLUP_250R:
++		return PULLUP_250R;
++	case I3C_HUB_DT_PULLUP_500R:
++		return PULLUP_500R;
++	case I3C_HUB_DT_PULLUP_1K:
++		return PULLUP_1K;
++	default:
++		return PULLUP_2K;
++	}
++}
++
++static u8 i3c_hub_io_strength_dt_to_reg(u8 dt_value)
++{
++	switch (dt_value) {
++	case I3C_HUB_DT_IO_STRENGTH_50_OHM:
++		return IO_STRENGTH_50_OHM;
++	case I3C_HUB_DT_IO_STRENGTH_40_OHM:
++		return IO_STRENGTH_40_OHM;
++	case I3C_HUB_DT_IO_STRENGTH_30_OHM:
++		return IO_STRENGTH_30_OHM;
++	default:
++		return IO_STRENGTH_20_OHM;
++	}
++}
++
++static int i3c_hub_of_get_setting(const struct device_node *node, const char *setting_name,
++				  const struct hub_setting settings[], const u8 settings_count,
++				  u8 *setting_value)
++{
++	const char *sval;
++	int ret;
++	int i;
++
++	ret = of_property_read_string(node, setting_name, &sval);
++	if (ret)
++		return ret;
++
++	for (i = 0; i < settings_count; ++i) {
++		const struct hub_setting * const setting = &settings[i];
++
++		if (!strcmp(setting->name, sval)) {
++			*setting_value = setting->value;
++			return 0;
++		}
++	}
++
++	return -EINVAL;
++}
++
++static void i3c_hub_tp_of_get_setting(struct device *dev, const struct device_node *node,
++				      struct tp_setting tp_setting[])
++{
++	struct device_node *tp_node;
++	int id;
++
++	for_each_available_child_of_node(node, tp_node) {
++		int ret;
++
++		if (!tp_node->name || of_node_cmp(tp_node->name, "target-port"))
++			continue;
++
++		if (!tp_node->full_name ||
++		    (sscanf(tp_node->full_name, "target-port@%i", &id) != 1)) {
++			dev_warn(dev, "Invalid target port node found in DT - %s\n",
++				 tp_node->full_name);
++			continue;
++		}
++
++		if (id >= I3C_HUB_TP_MAX_COUNT) {
++			dev_warn(dev, "Invalid target port index found in DT - %i\n", id);
++			continue;
++		}
++		ret = i3c_hub_of_get_setting(tp_node, "mode", tp_mode_settings,
++					     ARRAY_SIZE(tp_mode_settings), &tp_setting[id].mode);
++		if (ret)
++			dev_warn(dev, "Invalid or not specified setting for target port[%i].mode\n",
++				 id);
++
++		ret = i3c_hub_of_get_setting(tp_node, "pullup", tp_pullup_settings,
++					     ARRAY_SIZE(tp_pullup_settings),
++					     &tp_setting[id].pullup_en);
++		if (ret)
++			dev_warn(dev,
++				 "Invalid or not specified setting for target port[%i].pullup\n",
++				 id);
++
++		/* TP connect default enabled */
++		tp_setting[id].connect = I3C_HUB_DT_TP_CONNECT_ENABLED;
++		i3c_hub_of_get_setting(tp_node, "connect", tp_connect_settings,
++				       ARRAY_SIZE(tp_connect_settings),
++				       &tp_setting[id].connect);
++	}
++}
++
++static void i3c_hub_of_get_configuration(struct device *dev, const struct device_node *node)
++{
++	struct i3c_hub *priv = dev_get_drvdata(dev);
++	int ret;
++
++	ret = i3c_hub_of_get_setting(node, "cp0-ldo", ldo_settings, ARRAY_SIZE(ldo_settings),
++				     &priv->settings.cp0_ldo);
++	if (ret)
++		dev_warn(dev, "Invalid or not specified setting for cp0-ldo\n");
++
++	ret = i3c_hub_of_get_setting(node, "cp1-ldo", ldo_settings, ARRAY_SIZE(ldo_settings),
++				     &priv->settings.cp1_ldo);
++	if (ret)
++		dev_warn(dev, "Invalid or not specified setting for cp1-ldo\n");
++
++	ret = i3c_hub_of_get_setting(node, "tp0145-ldo", ldo_settings, ARRAY_SIZE(ldo_settings),
++				     &priv->settings.tp0145_ldo);
++	if (ret)
++		dev_warn(dev, "Invalid or not specified setting for tp0145-ldo\n");
++
++	ret = i3c_hub_of_get_setting(node, "tp2367-ldo", ldo_settings, ARRAY_SIZE(ldo_settings),
++				     &priv->settings.tp2367_ldo);
++	if (ret)
++		dev_warn(dev, "Invalid or not specified setting for tp2367-ldo\n");
++
++	ret = i3c_hub_of_get_setting(node, "tp0145-pullup", pullup_settings,
++				     ARRAY_SIZE(pullup_settings), &priv->settings.tp0145_pullup);
++	if (ret)
++		dev_warn(dev, "Invalid or not specified setting for tp0145-pullup\n");
++
++	ret = i3c_hub_of_get_setting(node, "tp2367-pullup", pullup_settings,
++				     ARRAY_SIZE(pullup_settings), &priv->settings.tp2367_pullup);
++	if (ret)
++		dev_warn(dev, "Invalid or not specified setting for tp2367-pullup\n");
++
++	i3c_hub_of_get_setting(node, "cp0-io-strength", io_strength_settings,
++			       ARRAY_SIZE(io_strength_settings), &priv->settings.cp0_io_strength);
++	i3c_hub_of_get_setting(node, "cp1-io-strength", io_strength_settings,
++			       ARRAY_SIZE(io_strength_settings), &priv->settings.cp1_io_strength);
++	i3c_hub_of_get_setting(node, "tp0145-io-strength", io_strength_settings,
++			       ARRAY_SIZE(io_strength_settings), &priv->settings.tp0145_io_strength);
++	i3c_hub_of_get_setting(node, "tp2367-io-strength", io_strength_settings,
++			       ARRAY_SIZE(io_strength_settings), &priv->settings.tp2367_io_strength);
++
++	i3c_hub_tp_of_get_setting(dev, node, priv->settings.tp);
++}
++
++static void i3c_hub_of_default_configuration(struct device *dev)
++{
++	struct i3c_hub *priv = dev_get_drvdata(dev);
++	int id;
++
++	priv->settings.cp0_ldo = I3C_HUB_DT_LDO_NOT_DEFINED;
++	priv->settings.cp1_ldo = I3C_HUB_DT_LDO_NOT_DEFINED;
++	priv->settings.tp0145_ldo = I3C_HUB_DT_LDO_NOT_DEFINED;
++	priv->settings.tp2367_ldo = I3C_HUB_DT_LDO_NOT_DEFINED;
++	priv->settings.tp0145_pullup = I3C_HUB_DT_PULLUP_NOT_DEFINED;
++	priv->settings.tp2367_pullup = I3C_HUB_DT_PULLUP_NOT_DEFINED;
++	priv->settings.cp0_io_strength = I3C_HUB_DT_IO_STRENGTH_NOT_DEFINED;
++	priv->settings.cp1_io_strength = I3C_HUB_DT_IO_STRENGTH_NOT_DEFINED;
++	priv->settings.tp0145_io_strength = I3C_HUB_DT_IO_STRENGTH_NOT_DEFINED;
++	priv->settings.tp2367_io_strength = I3C_HUB_DT_IO_STRENGTH_NOT_DEFINED;
++
++	for (id = 0; id < I3C_HUB_TP_MAX_COUNT; ++id) {
++		priv->settings.tp[id].mode = I3C_HUB_DT_TP_MODE_NOT_DEFINED;
++		priv->settings.tp[id].pullup_en = I3C_HUB_DT_TP_PULLUP_NOT_DEFINED;
++	}
++}
++
++static int i3c_hub_hw_configure_pullup(struct device *dev)
++{
++	struct i3c_hub *priv = dev_get_drvdata(dev);
++	u8 mask = 0, value = 0;
++
++	if (priv->settings.tp0145_pullup != I3C_HUB_DT_PULLUP_NOT_DEFINED) {
++		mask |= TP0145_PULLUP_CONF_MASK;
++		value |= TP0145_PULLUP_CONF(i3c_hub_pullup_dt_to_reg(priv->settings.tp0145_pullup));
++	}
++
++	if (priv->settings.tp2367_pullup != I3C_HUB_DT_PULLUP_NOT_DEFINED) {
++		mask |= TP2367_PULLUP_CONF_MASK;
++		value |= TP2367_PULLUP_CONF(i3c_hub_pullup_dt_to_reg(priv->settings.tp2367_pullup));
++	}
++
++	return regmap_update_bits(priv->regmap, I3C_HUB_LDO_AND_PULLUP_CONF, mask, value);
++}
++
++static int i3c_hub_hw_configure_ldo(struct device *dev)
++{
++	struct i3c_hub *priv = dev_get_drvdata(dev);
++	u8 mask_all = 0, val_all = 0;
++	u8 ldo_dis = 0, ldo_en = 0;
++	u32 reg_val;
++	u8 val;
++	int ret;
++
++	/* Get LDOs configuration to figure out what is going to be changed */
++	ret = regmap_read(priv->regmap, I3C_HUB_LDO_CONF, &reg_val);
++	if (ret)
++		return ret;
++
++	if (priv->settings.cp0_ldo != I3C_HUB_DT_LDO_NOT_DEFINED) {
++		val = CP0_LDO_VOLTAGE(i3c_hub_ldo_dt_to_reg(priv->settings.cp0_ldo));
++		if ((reg_val & CP0_LDO_VOLTAGE_MASK) != val)
++			ldo_dis |= CP0_LDO_EN;
++		if (priv->settings.cp0_ldo != I3C_HUB_DT_LDO_DISABLED)
++			ldo_en |= CP0_LDO_EN;
++		mask_all |= CP0_LDO_VOLTAGE_MASK;
++		val_all |= val;
++	}
++	if (priv->settings.cp1_ldo != I3C_HUB_DT_LDO_NOT_DEFINED) {
++		val = CP1_LDO_VOLTAGE(i3c_hub_ldo_dt_to_reg(priv->settings.cp1_ldo));
++		if ((reg_val & CP1_LDO_VOLTAGE_MASK) != val)
++			ldo_dis |= CP1_LDO_EN;
++		if (priv->settings.cp1_ldo != I3C_HUB_DT_LDO_DISABLED)
++			ldo_en |= CP1_LDO_EN;
++		mask_all |= CP1_LDO_VOLTAGE_MASK;
++		val_all |= val;
++	}
++	if (priv->settings.tp0145_ldo != I3C_HUB_DT_LDO_NOT_DEFINED) {
++		val = TP0145_LDO_VOLTAGE(i3c_hub_ldo_dt_to_reg(priv->settings.tp0145_ldo));
++		if ((reg_val & TP0145_LDO_VOLTAGE_MASK) != val)
++			ldo_dis |= TP0145_LDO_EN;
++		if (priv->settings.tp0145_ldo != I3C_HUB_DT_LDO_DISABLED)
++			ldo_en |= TP0145_LDO_EN;
++		mask_all |= TP0145_LDO_VOLTAGE_MASK;
++		val_all |= val;
++	}
++	if (priv->settings.tp2367_ldo != I3C_HUB_DT_LDO_NOT_DEFINED) {
++		val = TP2367_LDO_VOLTAGE(i3c_hub_ldo_dt_to_reg(priv->settings.tp2367_ldo));
++		if ((reg_val & TP2367_LDO_VOLTAGE_MASK) != val)
++			ldo_dis |= TP2367_LDO_EN;
++		if (priv->settings.tp2367_ldo != I3C_HUB_DT_LDO_DISABLED)
++			ldo_en |= TP2367_LDO_EN;
++		mask_all |= TP2367_LDO_VOLTAGE_MASK;
++		val_all |= val;
++	}
++
++	/* Disable all LDOs if LDO configuration is going to be changed. */
++	ret = regmap_update_bits(priv->regmap, I3C_HUB_LDO_AND_PULLUP_CONF, ldo_dis, 0);
++	if (ret)
++		return ret;
++
++	/* Set LDOs configuration */
++	ret = regmap_update_bits(priv->regmap, I3C_HUB_LDO_CONF, mask_all, val_all);
++	if (ret)
++		return ret;
++
++	/* Re-enable LDOs if needed */
++	return regmap_update_bits(priv->regmap, I3C_HUB_LDO_AND_PULLUP_CONF, ldo_en, ldo_en);
++}
++
++static int i3c_hub_hw_configure_io_strength(struct device *dev)
++{
++	struct i3c_hub *priv = dev_get_drvdata(dev);
++	u8 mask_all = 0, val_all = 0;
++	u32 reg_val;
++	u8 val;
++	struct dt_settings tmp;
++	int ret;
++
++	/* Get IO strength configuration to figure out what needs to be changed */
++	ret = regmap_read(priv->regmap, I3C_HUB_IO_STRENGTH, &reg_val);
++	if (ret)
++		return ret;
++
++	tmp = priv->settings;
++	if (tmp.cp0_io_strength != I3C_HUB_DT_IO_STRENGTH_NOT_DEFINED) {
++		val = CP0_IO_STRENGTH(i3c_hub_io_strength_dt_to_reg(tmp.cp0_io_strength));
++		mask_all |= CP0_IO_STRENGTH_MASK;
++		val_all |= val;
++	}
++	if (tmp.cp1_io_strength != I3C_HUB_DT_IO_STRENGTH_NOT_DEFINED) {
++		val = CP1_IO_STRENGTH(i3c_hub_io_strength_dt_to_reg(tmp.cp1_io_strength));
++		mask_all |= CP1_IO_STRENGTH_MASK;
++		val_all |= val;
++	}
++	if (tmp.tp0145_io_strength != I3C_HUB_DT_IO_STRENGTH_NOT_DEFINED) {
++		val = TP0145_IO_STRENGTH(i3c_hub_io_strength_dt_to_reg(tmp.tp0145_io_strength));
++		mask_all |= TP0145_IO_STRENGTH_MASK;
++		val_all |= val;
++	}
++	if (tmp.tp2367_io_strength != I3C_HUB_DT_IO_STRENGTH_NOT_DEFINED) {
++		val = TP2367_IO_STRENGTH(i3c_hub_io_strength_dt_to_reg(tmp.tp2367_io_strength));
++		mask_all |= TP2367_IO_STRENGTH_MASK;
++		val_all |= val;
++	}
++
++	/* Set IO strength if required */
++	return regmap_update_bits(priv->regmap, I3C_HUB_IO_STRENGTH, mask_all, val_all);
++}
++
++static int i3c_hub_hw_configure_tp(struct device *dev)
++{
++	struct i3c_hub *priv = dev_get_drvdata(dev);
++	u8 pullup_mask = 0, pullup_val = 0;
++	u8 smbus_mask = 0, smbus_val = 0;
++	u8 gpio_mask = 0, gpio_val = 0;
++	u8 i3c_mask = 0, i3c_val = 0;
++	int ret;
++	int i;
++
++	/* TBD: Read type of HUB from register I3C_HUB_DEV_INFO_0 to learn target ports count. */
++	for (i = 0; i < I3C_HUB_TP_MAX_COUNT; ++i) {
++		if (priv->settings.tp[i].mode != I3C_HUB_DT_TP_MODE_NOT_DEFINED) {
++			i3c_mask |= TPn_NET_CON(i);
++			smbus_mask |= TPn_SMBUS_MODE_EN(i);
++			gpio_mask |= TPn_GPIO_MODE_EN(i);
++
++			if (priv->settings.tp[i].mode == I3C_HUB_DT_TP_MODE_I3C)
++				i3c_val |= TPn_NET_CON(i);
++			else if (priv->settings.tp[i].mode == I3C_HUB_DT_TP_MODE_SMBUS)
++				smbus_val |= TPn_SMBUS_MODE_EN(i);
++			else if (priv->settings.tp[i].mode == I3C_HUB_DT_TP_MODE_GPIO)
++				gpio_val |= TPn_GPIO_MODE_EN(i);
++		}
++		if (priv->settings.tp[i].pullup_en != I3C_HUB_DT_TP_PULLUP_NOT_DEFINED) {
++			pullup_mask |= TPn_PULLUP_EN(i);
++			if (priv->settings.tp[i].pullup_en == I3C_HUB_DT_TP_PULLUP_ENABLED)
++				pullup_val |= TPn_PULLUP_EN(i);
++		}
++	}
++
++	ret = regmap_update_bits(priv->regmap, I3C_HUB_TP_NET_CON_CONF, i3c_mask, i3c_val);
++	if (ret)
++		return ret;
++
++	/* Set Open-Drain / Push-Pull compatible for I3C mode */
++	ret = regmap_update_bits(priv->regmap, I3C_HUB_TP_IO_MODE_CONF, i3c_mask, ~i3c_val);
++	if (ret)
++		return ret;
++
++	ret = regmap_update_bits(priv->regmap, I3C_HUB_TP_SMBUS_AGNT_EN, smbus_mask, smbus_val);
++	if (ret)
++		return ret;
++
++	ret = regmap_update_bits(priv->regmap, I3C_HUB_TP_GPIO_MODE_EN, gpio_mask, gpio_val);
++	if (ret)
++		return ret;
++
++	/* Enable TP here in case TP was configured */
++	ret = regmap_update_bits(priv->regmap, I3C_HUB_TP_ENABLE, i3c_mask | smbus_mask | gpio_mask,
++				 i3c_val | smbus_val | gpio_val);
++	if (ret)
++		return ret;
++
++	return regmap_update_bits(priv->regmap, I3C_HUB_TP_PULLUP_EN, pullup_mask, pullup_val);
++}
++
++static int i3c_hub_configure_hw(struct device *dev)
++{
++	int ret;
++
++	ret = i3c_hub_hw_configure_pullup(dev);
++	if (ret)
++		return ret;
++
++	ret = i3c_hub_hw_configure_ldo(dev);
++	if (ret)
++		return ret;
++
++	ret = i3c_hub_hw_configure_io_strength(dev);
++	if (ret)
++		return ret;
++
++	return i3c_hub_hw_configure_tp(dev);
++}
++
++static const struct i3c_device_id i3c_hub_ids[] = {
++	I3C_CLASS(I3C_DCR_HUB, NULL),
++	{ },
++};
++
++static int fops_access_reg_get(void *ctx, u64 *val)
++{
++	struct i3c_hub *priv = ctx;
++	u32 reg_val;
++	int ret;
++
++	ret = regmap_read(priv->regmap, priv->reg_addr, &reg_val);
++	if (ret)
++		return ret;
++
++	*val = reg_val & 0xFF;
++	return 0;
++}
++
++static int fops_access_reg_set(void *ctx, u64 val)
++{
++	struct i3c_hub *priv = ctx;
++
++	return regmap_write(priv->regmap, priv->reg_addr, val & 0xFF);
++}
++DEFINE_DEBUGFS_ATTRIBUTE(fops_access_reg, fops_access_reg_get, fops_access_reg_set, "0x%llX\n");
++
++static int i3c_hub_debugfs_init(struct i3c_hub *priv, const char *hub_id)
++{
++	struct dentry  *entry, *dt_conf_dir, *reg_dir;
++	int i;
++
++	entry = debugfs_create_dir(hub_id, NULL);
++	if (IS_ERR(entry))
++		return PTR_ERR(entry);
++
++	priv->debug_dir = entry;
++
++	entry = debugfs_create_dir("dt-conf", priv->debug_dir);
++	if (IS_ERR(entry))
++		goto err_remove;
++
++	dt_conf_dir = entry;
++
++	debugfs_create_u8("cp0-ldo", 0400, dt_conf_dir, &priv->settings.cp0_ldo);
++	debugfs_create_u8("cp1-ldo", 0400, dt_conf_dir, &priv->settings.cp1_ldo);
++	debugfs_create_u8("tp0145-ldo", 0400, dt_conf_dir, &priv->settings.tp0145_ldo);
++	debugfs_create_u8("tp2367-ldo", 0400, dt_conf_dir, &priv->settings.tp2367_ldo);
++	debugfs_create_u8("tp0145-pullup", 0400, dt_conf_dir, &priv->settings.tp0145_pullup);
++	debugfs_create_u8("tp2367-pullup", 0400, dt_conf_dir, &priv->settings.tp2367_pullup);
++
++	for (i = 0; i < I3C_HUB_TP_MAX_COUNT; ++i) {
++		char file_name[32];
++
++		sprintf(file_name, "tp%i.mode", i);
++		debugfs_create_u8(file_name, 0400, dt_conf_dir, &priv->settings.tp[i].mode);
++		sprintf(file_name, "tp%i.pullup_en", i);
++		debugfs_create_u8(file_name, 0400, dt_conf_dir, &priv->settings.tp[i].pullup_en);
++	}
++
++	entry = debugfs_create_dir("reg", priv->debug_dir);
++	if (IS_ERR(entry))
++		goto err_remove;
++
++	reg_dir = entry;
++
++	entry = debugfs_create_file_unsafe("access", 0600, reg_dir, priv, &fops_access_reg);
++	if (IS_ERR(entry))
++		goto err_remove;
++
++	debugfs_create_u8("offset", 0600, reg_dir, &priv->reg_addr);
++
++	return 0;
++
++err_remove:
++	debugfs_remove_recursive(priv->debug_dir);
++	return PTR_ERR(entry);
++}
++
++static ssize_t tp_connect_show(struct device *dev, struct device_attribute *attr,
++				char *buf)
++{
++	struct i3c_hub *priv = dev_get_drvdata(dev);
++	u32 reg_val;
++	int ret;
++	ret = regmap_read(priv->regmap, I3C_HUB_TP_NET_CON_CONF, &reg_val);
++	if (ret)
++		return -EIO;
++
++	return sprintf(buf, "%02x", reg_val & 0xFF);
++}
++
++static ssize_t tp_connect_store(struct device *dev, struct device_attribute *attr,
++				 const char *buf, size_t count)
++{
++	struct i3c_hub *priv = dev_get_drvdata(dev);
++	u8 tp_en;
++	int ret;
++
++	if (kstrtou8(buf, 0, &tp_en))
++		return -EINVAL;
++
++	/* Unlock access to protected registers */
++	ret = regmap_write(priv->regmap, I3C_HUB_PROTECTION_CODE, REGISTERS_UNLOCK_CODE);
++	if (ret)
++		return -EIO;
++
++	ret = regmap_write(priv->regmap, I3C_HUB_TP_NET_CON_CONF, tp_en);
++	if (ret)
++		return -EIO;
++
++	/* Lock access to protected registers */
++	ret = regmap_write(priv->regmap, I3C_HUB_PROTECTION_CODE, REGISTERS_LOCK_CODE);
++	if (ret)
++		return -EIO;
++
++	return count;
++}
++static DEVICE_ATTR_RW(tp_connect);
++
++static int i3c_hub_connect_tp(struct device *dev)
++{
++	struct i3c_hub *priv = dev_get_drvdata(dev);
++	u32 tp_dis_val = 0;
++	int i;
++
++	for (i = 0; i < I3C_HUB_TP_MAX_COUNT; ++i)
++		if (priv->settings.tp[i].connect == I3C_HUB_DT_TP_CONNECT_DISABLED)
++			tp_dis_val |= TPn_NET_CON(i);
++
++	return regmap_clear_bits(priv->regmap, I3C_HUB_TP_NET_CON_CONF, tp_dis_val);
++}
++
++static int i3c_hub_probe(struct i3c_device *i3cdev)
++{
++	struct regmap_config i3c_hub_regmap_config = {
++		.reg_bits = 8,
++		.val_bits = 8,
++	};
++	struct device *dev = &i3cdev->dev;
++	struct device_node *node;
++	struct regmap *regmap;
++	struct i3c_hub *priv;
++	char hub_id[32];
++	int ret;
++
++	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	priv->i3cdev = i3cdev;
++	i3cdev_set_drvdata(i3cdev, priv);
++
++	sprintf(hub_id, "i3c-hub-%d-%llx", i3cdev->bus->id, i3cdev->desc->info.pid);
++	ret = i3c_hub_debugfs_init(priv, hub_id);
++	if (ret)
++		return dev_err_probe(dev, ret, "Failed to initialized DebugFS.\n");
++
++	i3c_hub_of_default_configuration(dev);
++
++	/* TBD: Support for multiple HUBs. */
++	/* Just get first hub node from DT */
++	node = of_get_child_by_name(dev->parent->of_node, "hub");
++	if (!node) {
++		dev_warn(dev, "Failed to find DT entry for the driver. Running with defaults.\n");
++	} else {
++		i3c_hub_of_get_configuration(dev, node);
++		of_node_put(node);
++	}
++
++	regmap = devm_regmap_init_i3c(i3cdev, &i3c_hub_regmap_config);
++	if (IS_ERR(regmap)) {
++		ret = PTR_ERR(regmap);
++		dev_err(dev, "Failed to register I3C HUB regmap\n");
++		goto error;
++	}
++
++	priv->regmap = regmap;
++
++	/* Unlock access to protected registers */
++	ret = regmap_write(priv->regmap, I3C_HUB_PROTECTION_CODE, REGISTERS_UNLOCK_CODE);
++	if (ret) {
++		dev_err(dev, "Failed to unlock HUB's protected registers\n");
++		goto error;
++	}
++
++	ret = i3c_hub_configure_hw(dev);
++	if (ret) {
++		dev_err(dev, "Failed to configure the HUB\n");
++		goto error;
++	}
++
++	if (i3cdev->bus->jesd403) {
++		i3c_device_send_ccc_cmd(i3cdev, I3C_CCC_SETHID);
++		i3c_device_send_ccc_cmd(i3cdev, I3C_CCC_SETAASA);
++	}
++	/* Setup hub network connection according to dts setting */
++	i3c_hub_connect_tp(dev);
++
++	/* Lock access to protected registers */
++	ret = regmap_write(priv->regmap, I3C_HUB_PROTECTION_CODE, REGISTERS_LOCK_CODE);
++	if (ret) {
++		dev_err(dev, "Failed to lock HUB's protected registers\n");
++		goto error;
++	}
++
++	ret = sysfs_create_file(&dev->kobj,
++				&dev_attr_tp_connect.attr);
++	if (ret) {
++		dev_err(dev, "Failed to create tp_connect sysfs file\n");
++		goto error;
++	}
++	/* TBD: Apply special/security lock here using DEV_CMD register */
++
++	return 0;
++
++error:
++	debugfs_remove_recursive(priv->debug_dir);
++	return ret;
++}
++
++static void i3c_hub_remove(struct i3c_device *i3cdev)
++{
++	struct i3c_hub *priv = i3cdev_get_drvdata(i3cdev);
++
++	debugfs_remove_recursive(priv->debug_dir);
++	sysfs_remove_file(&i3cdev->dev.kobj, &dev_attr_tp_connect.attr);
++}
++
++static struct i3c_driver i3c_hub = {
++	.driver.name = "i3c-hub",
++	.id_table = i3c_hub_ids,
++	.probe = i3c_hub_probe,
++	.remove = i3c_hub_remove,
++};
++
++module_i3c_driver(i3c_hub);
++
++MODULE_AUTHOR("Zbigniew Lukwinski <zbigniew.lukwinski@linux.intel.com>");
++MODULE_DESCRIPTION("I3C HUB driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/i3c/i3cdev.c b/drivers/i3c/i3cdev.c
+new file mode 100644
+index 000000000000..710a8592a62b
+--- /dev/null
++++ b/drivers/i3c/i3cdev.c
+@@ -0,0 +1,435 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Copyright (c) 2019 Synopsys, Inc. and/or its affiliates.
++ *
++ * Author: Vitor Soares <soares@synopsys.com>
++ */
++
++#include <linux/cdev.h>
++#include <linux/compat.h>
++#include <linux/device.h>
++#include <linux/fs.h>
++#include <linux/init.h>
++#include <linux/jiffies.h>
++#include <linux/kernel.h>
++#include <linux/list.h>
++#include <linux/module.h>
++#include <linux/notifier.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++
++#include <linux/i3c/i3cdev.h>
++
++#include "internals.h"
++
++struct i3cdev_data {
++	struct list_head list;
++	struct i3c_device *i3c;
++	struct cdev cdev;
++	struct device *dev;
++	int id;
++};
++
++static DEFINE_IDA(i3cdev_ida);
++static dev_t i3cdev_number;
++#define I3C_MINORS 32 /* 32 I3C devices supported for now */
++
++static LIST_HEAD(i3cdev_list);
++static DEFINE_SPINLOCK(i3cdev_list_lock);
++
++static struct i3cdev_data *i3cdev_get_by_i3c(struct i3c_device *i3c)
++{
++	struct i3cdev_data *i3cdev;
++
++	spin_lock(&i3cdev_list_lock);
++	list_for_each_entry(i3cdev, &i3cdev_list, list) {
++		if (i3cdev->i3c == i3c)
++			goto found;
++	}
++
++	i3cdev = NULL;
++
++found:
++	spin_unlock(&i3cdev_list_lock);
++	return i3cdev;
++}
++
++static struct i3cdev_data *get_free_i3cdev(struct i3c_device *i3c)
++{
++	struct i3cdev_data *i3cdev;
++	int id;
++
++	id = ida_simple_get(&i3cdev_ida, 0, I3C_MINORS, GFP_KERNEL);
++	if (id < 0) {
++		pr_err("i3cdev: no minor number available!\n");
++		return ERR_PTR(id);
++	}
++
++	i3cdev = kzalloc(sizeof(*i3cdev), GFP_KERNEL);
++	if (!i3cdev) {
++		ida_simple_remove(&i3cdev_ida, id);
++		return ERR_PTR(-ENOMEM);
++	}
++
++	i3cdev->i3c = i3c;
++	i3cdev->id = id;
++
++	spin_lock(&i3cdev_list_lock);
++	list_add_tail(&i3cdev->list, &i3cdev_list);
++	spin_unlock(&i3cdev_list_lock);
++
++	return i3cdev;
++}
++
++static void put_i3cdev(struct i3cdev_data *i3cdev)
++{
++	spin_lock(&i3cdev_list_lock);
++	list_del(&i3cdev->list);
++	spin_unlock(&i3cdev_list_lock);
++	kfree(i3cdev);
++}
++
++static ssize_t
++i3cdev_read(struct file *file, char __user *buf, size_t count, loff_t *f_pos)
++{
++	struct i3c_device *i3c = file->private_data;
++	struct i3c_priv_xfer xfers = {
++		.rnw = true,
++		.len = count,
++	};
++	char *tmp;
++	int ret;
++
++	tmp = kzalloc(count, GFP_KERNEL);
++	if (!tmp)
++		return -ENOMEM;
++
++	xfers.data.in = tmp;
++
++	dev_dbg(&i3c->dev, "Reading %zu bytes.\n", count);
++
++	ret = i3c_device_do_priv_xfers(i3c, &xfers, 1);
++	if (!ret)
++		ret = copy_to_user(buf, tmp, count) ? -EFAULT : ret;
++
++	kfree(tmp);
++	return ret;
++}
++
++static ssize_t
++i3cdev_write(struct file *file, const char __user *buf, size_t count,
++	     loff_t *f_pos)
++{
++	struct i3c_device *i3c = file->private_data;
++	struct i3c_priv_xfer xfers = {
++		.rnw = false,
++		.len = count,
++	};
++	char *tmp;
++	int ret;
++
++	tmp = memdup_user(buf, count);
++	if (IS_ERR(tmp))
++		return PTR_ERR(tmp);
++
++	xfers.data.out = tmp;
++
++	dev_dbg(&i3c->dev, "Writing %zu bytes.\n", count);
++
++	ret = i3c_device_do_priv_xfers(i3c, &xfers, 1);
++	kfree(tmp);
++	return (!ret) ? count : ret;
++}
++
++static int
++i3cdev_do_priv_xfer(struct i3c_device *dev, struct i3c_ioc_priv_xfer *xfers,
++		    unsigned int nxfers)
++{
++	struct i3c_priv_xfer *k_xfers;
++	u8 **data_ptrs;
++	int i, ret = 0;
++
++	k_xfers = kcalloc(nxfers, sizeof(*k_xfers), GFP_KERNEL);
++	if (!k_xfers)
++		return -ENOMEM;
++
++	data_ptrs = kcalloc(nxfers, sizeof(*data_ptrs), GFP_KERNEL);
++	if (!data_ptrs) {
++		ret = -ENOMEM;
++		goto err_free_k_xfer;
++	}
++
++	for (i = 0; i < nxfers; i++) {
++		data_ptrs[i] = memdup_user((const u8 __user *)
++					   (uintptr_t)xfers[i].data,
++					   xfers[i].len);
++		if (IS_ERR(data_ptrs[i])) {
++			ret = PTR_ERR(data_ptrs[i]);
++			break;
++		}
++
++		k_xfers[i].len = xfers[i].len;
++		if (xfers[i].rnw) {
++			k_xfers[i].rnw = true;
++			k_xfers[i].data.in = data_ptrs[i];
++		} else {
++			k_xfers[i].rnw = false;
++			k_xfers[i].data.out = data_ptrs[i];
++		}
++	}
++
++	if (ret < 0) {
++		nxfers = i;
++		goto err_free_mem;
++	}
++
++	ret = i3c_device_do_priv_xfers(dev, k_xfers, nxfers);
++	if (ret)
++		goto err_free_mem;
++
++	for (i = 0; i < nxfers; i++) {
++		if (xfers[i].rnw) {
++			if (copy_to_user((void __user *)(uintptr_t)xfers[i].data,
++					 data_ptrs[i], xfers[i].len))
++				ret = -EFAULT;
++			xfers[i].len = k_xfers[i].len;
++		}
++	}
++
++err_free_mem:
++	for (i = 0; i < nxfers; i++)
++		kfree(data_ptrs[i]);
++	kfree(data_ptrs);
++err_free_k_xfer:
++	kfree(k_xfers);
++	return ret;
++}
++
++static struct i3c_ioc_priv_xfer *
++i3cdev_get_ioc_priv_xfer(unsigned int cmd, struct i3c_ioc_priv_xfer *u_xfers,
++			 unsigned int *nxfers)
++{
++	u32 tmp = _IOC_SIZE(cmd);
++
++	if ((tmp % sizeof(struct i3c_ioc_priv_xfer)) != 0)
++		return ERR_PTR(-EINVAL);
++
++	*nxfers = tmp / sizeof(struct i3c_ioc_priv_xfer);
++	if (*nxfers == 0)
++		return NULL;
++
++	return memdup_user(u_xfers, tmp);
++}
++
++static int
++i3cdev_ioc_priv_xfer(struct i3c_device *i3c, unsigned int cmd,
++		     struct i3c_ioc_priv_xfer *u_xfers)
++{
++	struct i3c_ioc_priv_xfer *k_xfers;
++	unsigned int nxfers;
++	int ret, i;
++
++	k_xfers = i3cdev_get_ioc_priv_xfer(cmd, u_xfers, &nxfers);
++	if (IS_ERR_OR_NULL(k_xfers))
++		return PTR_ERR(k_xfers);
++
++	ret = i3cdev_do_priv_xfer(i3c, k_xfers, nxfers);
++
++	for (i = 0; i < nxfers; i++) {
++		if (k_xfers[i].rnw)
++			put_user(k_xfers[i].len, &u_xfers[i].len);
++	}
++
++	kfree(k_xfers);
++
++	return ret;
++}
++
++static long
++i3cdev_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
++{
++	struct i3c_device *i3c = file->private_data;
++
++	dev_dbg(&i3c->dev, "ioctl, cmd=0x%02x, arg=0x%02lx\n", cmd, arg);
++
++	if (_IOC_TYPE(cmd) != I3C_DEV_IOC_MAGIC)
++		return -ENOTTY;
++
++	/* Check command number and direction */
++	if (_IOC_NR(cmd) == _IOC_NR(I3C_IOC_PRIV_XFER(0)) &&
++	    _IOC_DIR(cmd) == (_IOC_READ | _IOC_WRITE))
++		return i3cdev_ioc_priv_xfer(i3c, cmd,
++					(struct i3c_ioc_priv_xfer __user *)arg);
++
++	return 0;
++}
++
++static int i3cdev_open(struct inode *inode, struct file *file)
++{
++	struct i3cdev_data *i3cdev = container_of(inode->i_cdev,
++						  struct i3cdev_data,
++						  cdev);
++
++	file->private_data = i3cdev->i3c;
++
++	return 0;
++}
++
++static int i3cdev_release(struct inode *inode, struct file *file)
++{
++	file->private_data = NULL;
++
++	return 0;
++}
++
++static const struct file_operations i3cdev_fops = {
++	.owner		= THIS_MODULE,
++	.read		= i3cdev_read,
++	.write		= i3cdev_write,
++	.unlocked_ioctl	= i3cdev_ioctl,
++	.open		= i3cdev_open,
++	.release	= i3cdev_release,
++};
++
++/* ------------------------------------------------------------------------- */
++
++static struct class *i3cdev_class;
++
++static int i3cdev_attach(struct device *dev, void *dummy)
++{
++	struct i3cdev_data *i3cdev;
++	struct i3c_device *i3c;
++	int res;
++
++	if (dev->type == &i3c_masterdev_type || dev->driver)
++		return 0;
++
++	i3c = dev_to_i3cdev(dev);
++
++	/* Get a device */
++	i3cdev = get_free_i3cdev(i3c);
++	if (IS_ERR(i3cdev))
++		return PTR_ERR(i3cdev);
++
++	cdev_init(&i3cdev->cdev, &i3cdev_fops);
++	i3cdev->cdev.owner = THIS_MODULE;
++	res = cdev_add(&i3cdev->cdev,
++		       MKDEV(MAJOR(i3cdev_number), i3cdev->id), 1);
++	if (res)
++		goto error_cdev;
++
++	/* register this i3c device with the driver core */
++	i3cdev->dev = device_create(i3cdev_class, &i3c->dev,
++				    MKDEV(MAJOR(i3cdev_number), i3cdev->id),
++				    NULL, "i3c-%s", dev_name(&i3c->dev));
++	if (IS_ERR(i3cdev->dev)) {
++		res = PTR_ERR(i3cdev->dev);
++		goto error;
++	}
++	pr_debug("i3cdev: I3C device [%s] registered as minor %d\n",
++		 dev_name(&i3c->dev), i3cdev->id);
++	return 0;
++
++error:
++	cdev_del(&i3cdev->cdev);
++error_cdev:
++	put_i3cdev(i3cdev);
++	return res;
++}
++
++static int i3cdev_detach(struct device *dev, void *dummy)
++{
++	struct i3cdev_data *i3cdev;
++	struct i3c_device *i3c;
++
++	if (dev->type == &i3c_masterdev_type)
++		return 0;
++
++	i3c = dev_to_i3cdev(dev);
++
++	i3cdev = i3cdev_get_by_i3c(i3c);
++	if (!i3cdev)
++		return 0;
++
++	cdev_del(&i3cdev->cdev);
++	device_destroy(i3cdev_class, MKDEV(MAJOR(i3cdev_number), i3cdev->id));
++	ida_simple_remove(&i3cdev_ida, i3cdev->id);
++	put_i3cdev(i3cdev);
++
++	pr_debug("i3cdev: device [%s] unregistered\n", dev_name(&i3c->dev));
++
++	return 0;
++}
++
++static int i3cdev_notifier_call(struct notifier_block *nb,
++				unsigned long action,
++				void *data)
++{
++	struct device *dev = data;
++
++	switch (action) {
++	case BUS_NOTIFY_ADD_DEVICE:
++	case BUS_NOTIFY_UNBOUND_DRIVER:
++		return i3cdev_attach(dev, NULL);
++	case BUS_NOTIFY_DEL_DEVICE:
++	case BUS_NOTIFY_BOUND_DRIVER:
++	case BUS_NOTIFY_REMOVED_DEVICE:
++		return i3cdev_detach(dev, NULL);
++	}
++
++	return 0;
++}
++
++static struct notifier_block i3c_notifier = {
++	.notifier_call = i3cdev_notifier_call,
++};
++
++static int __init i3cdev_init(void)
++{
++	int res;
++
++	/* Dynamically request unused major number */
++	res = alloc_chrdev_region(&i3cdev_number, 0, I3C_MINORS, "i3c");
++	if (res)
++		goto out;
++
++	/* Create a classe to populate sysfs entries*/
++	i3cdev_class = class_create("i3cdev");
++	if (IS_ERR(i3cdev_class)) {
++		res = PTR_ERR(i3cdev_class);
++		goto out_unreg_chrdev;
++	}
++
++	/* Keep track of busses which have devices to add or remove later */
++	res = bus_register_notifier(&i3c_bus_type, &i3c_notifier);
++	if (res)
++		goto out_unreg_class;
++
++	/* Bind to already existing device without driver right away */
++	i3c_for_each_dev(NULL, i3cdev_attach);
++
++	return 0;
++
++out_unreg_class:
++	class_destroy(i3cdev_class);
++out_unreg_chrdev:
++	unregister_chrdev_region(i3cdev_number, I3C_MINORS);
++out:
++	pr_err("%s: Driver Initialisation failed\n", __FILE__);
++	return res;
++}
++
++static void __exit i3cdev_exit(void)
++{
++	bus_unregister_notifier(&i3c_bus_type, &i3c_notifier);
++	i3c_for_each_dev(NULL, i3cdev_detach);
++	class_destroy(i3cdev_class);
++	unregister_chrdev_region(i3cdev_number, I3C_MINORS);
++}
++
++MODULE_AUTHOR("Vitor Soares <soares@synopsys.com>");
++MODULE_DESCRIPTION("I3C /dev entries driver");
++MODULE_LICENSE("GPL");
++
++module_init(i3cdev_init);
++module_exit(i3cdev_exit);
+diff --git a/drivers/i3c/internals.h b/drivers/i3c/internals.h
+index 908a807badaf..ff70f7fd4d8c 100644
+--- a/drivers/i3c/internals.h
++++ b/drivers/i3c/internals.h
+@@ -9,8 +9,10 @@
+ #define I3C_INTERNALS_H
+ 
+ #include <linux/i3c/master.h>
++#include <linux/i3c/target.h>
+ 
+ extern struct bus_type i3c_bus_type;
++extern const struct device_type i3c_masterdev_type;
+ 
+ void i3c_bus_normaluse_lock(struct i3c_bus *bus);
+ void i3c_bus_normaluse_unlock(struct i3c_bus *bus);
+@@ -24,4 +26,14 @@ int i3c_dev_enable_ibi_locked(struct i3c_dev_desc *dev);
+ int i3c_dev_request_ibi_locked(struct i3c_dev_desc *dev,
+ 			       const struct i3c_ibi_setup *req);
+ void i3c_dev_free_ibi_locked(struct i3c_dev_desc *dev);
++int i3c_dev_send_ccc_cmd_locked(struct i3c_dev_desc *dev, u8 ccc_id);
++int i3c_dev_getstatus_locked(struct i3c_dev_desc *dev, struct i3c_device_info *info);
++int i3c_master_getmrl_locked(struct i3c_master_controller *master, struct i3c_device_info *info);
++int i3c_master_getmwl_locked(struct i3c_master_controller *master, struct i3c_device_info *info);
++int i3c_master_setmrl_locked(struct i3c_master_controller *master,
++			     struct i3c_device_info *info, __be16 read_len, u8 ibi_len);
++int i3c_master_setmwl_locked(struct i3c_master_controller *master,
++			     struct i3c_device_info *info, __be16 write_len);
++int i3c_for_each_dev(void *data, int (*fn)(struct device *, void *));
++int i3c_dev_generate_ibi_locked(struct i3c_dev_desc *dev, const u8 *data, int len);
+ #endif /* I3C_INTERNAL_H */
+diff --git a/drivers/i3c/master.c b/drivers/i3c/master.c
+index 3b75b63a127e..aa1991cc6efd 100644
+--- a/drivers/i3c/master.c
++++ b/drivers/i3c/master.c
+@@ -21,8 +21,8 @@
+ 
+ static DEFINE_IDR(i3c_bus_idr);
+ static DEFINE_MUTEX(i3c_core_lock);
+-static int __i3c_first_dynamic_bus_num;
+ static BLOCKING_NOTIFIER_HEAD(i3c_bus_notifier);
++static int __i3c_first_dynamic_bus_num;
+ 
+ /**
+  * i3c_bus_maintenance_lock - Lock the bus for a maintenance operation
+@@ -300,19 +300,24 @@ static const struct device_type i3c_device_type = {
+ 	.uevent = i3c_device_uevent,
+ };
+ 
++const struct device_type i3c_target_device_type = {
++};
++
+ static int i3c_device_match(struct device *dev, struct device_driver *drv)
+ {
+ 	struct i3c_device *i3cdev;
+ 	struct i3c_driver *i3cdrv;
+ 
+-	if (dev->type != &i3c_device_type)
++	if (dev->type != &i3c_device_type && dev->type != &i3c_target_device_type)
+ 		return 0;
+ 
+ 	i3cdev = dev_to_i3cdev(dev);
+ 	i3cdrv = drv_to_i3cdrv(drv);
+-	if (i3c_device_match_id(i3cdev, i3cdrv->id_table))
+-		return 1;
+ 
++	if ((dev->type == &i3c_device_type && !i3cdrv->target) ||
++	    (dev->type == &i3c_target_device_type && i3cdrv->target))
++		if (i3c_device_match_id(i3cdev, i3cdrv->id_table))
++			return 1;
+ 	return 0;
+ }
+ 
+@@ -332,7 +337,8 @@ static void i3c_device_remove(struct device *dev)
+ 	if (driver->remove)
+ 		driver->remove(i3cdev);
+ 
+-	i3c_device_free_ibi(i3cdev);
++	if (!driver->target)
++		i3c_device_free_ibi(i3cdev);
+ }
+ 
+ struct bus_type i3c_bus_type = {
+@@ -557,6 +563,20 @@ static ssize_t i2c_scl_frequency_show(struct device *dev,
+ }
+ static DEVICE_ATTR_RO(i2c_scl_frequency);
+ 
++static ssize_t discover_store(struct device *dev, struct device_attribute *da,
++			      const char *buf, size_t count)
++{
++	struct i3c_master_controller *master;
++	ssize_t ret = count;
++
++	master = dev_to_i3cmaster(dev);
++	dev_dbg(&master->dev, "Request master to do DAA\n");
++	i3c_master_do_daa(master);
++
++	return ret;
++}
++static DEVICE_ATTR_WO(discover);
++
+ static struct attribute *i3c_masterdev_attrs[] = {
+ 	&dev_attr_mode.attr,
+ 	&dev_attr_current_master.attr,
+@@ -567,6 +587,7 @@ static struct attribute *i3c_masterdev_attrs[] = {
+ 	&dev_attr_pid.attr,
+ 	&dev_attr_dynamic_address.attr,
+ 	&dev_attr_hdrcap.attr,
++	&dev_attr_discover.attr,
+ 	NULL,
+ };
+ ATTRIBUTE_GROUPS(i3c_masterdev);
+@@ -585,7 +606,7 @@ static void i3c_masterdev_release(struct device *dev)
+ 	of_node_put(dev->of_node);
+ }
+ 
+-static const struct device_type i3c_masterdev_type = {
++const struct device_type i3c_masterdev_type = {
+ 	.groups	= i3c_masterdev_groups,
+ };
+ 
+@@ -817,6 +838,40 @@ static int i3c_master_rstdaa_locked(struct i3c_master_controller *master,
+ 	return ret;
+ }
+ 
++static int i3c_master_setaasa_locked(struct i3c_master_controller *master)
++{
++	struct i3c_ccc_cmd_dest dest;
++	struct i3c_ccc_cmd cmd;
++	int ret;
++
++	i3c_ccc_cmd_dest_init(&dest, I3C_BROADCAST_ADDR, 0);
++	i3c_ccc_cmd_init(&cmd, false, I3C_CCC_SETAASA, &dest, 1);
++	ret = i3c_master_send_ccc_cmd_locked(master, &cmd);
++	i3c_ccc_cmd_dest_cleanup(&dest);
++
++	return ret;
++}
++
++static int i3c_master_sethid_locked(struct i3c_master_controller *master)
++{
++	struct i3c_ccc_cmd_dest dest;
++	struct i3c_ccc_cmd cmd;
++	struct i3c_ccc_sethid *sethid;
++	int ret;
++
++	sethid = i3c_ccc_cmd_dest_init(&dest, I3C_BROADCAST_ADDR, 1);
++	if (!sethid)
++		return -ENOMEM;
++
++	sethid->hid = 0;
++	i3c_ccc_cmd_init(&cmd, false, I3C_CCC_SETHID, &dest, 1);
++
++	ret = i3c_master_send_ccc_cmd_locked(master, &cmd);
++	i3c_ccc_cmd_dest_cleanup(&dest);
++
++	return ret;
++}
++
+ /**
+  * i3c_master_entdaa_locked() - start a DAA (Dynamic Address Assignment)
+  *				procedure
+@@ -1043,8 +1098,7 @@ static int i3c_master_setnewda_locked(struct i3c_master_controller *master,
+ 	return i3c_master_setda_locked(master, oldaddr, newaddr, false);
+ }
+ 
+-static int i3c_master_getmrl_locked(struct i3c_master_controller *master,
+-				    struct i3c_device_info *info)
++int i3c_master_getmrl_locked(struct i3c_master_controller *master, struct i3c_device_info *info)
+ {
+ 	struct i3c_ccc_cmd_dest dest;
+ 	struct i3c_ccc_mrl *mrl;
+@@ -1085,8 +1139,7 @@ static int i3c_master_getmrl_locked(struct i3c_master_controller *master,
+ 	return ret;
+ }
+ 
+-static int i3c_master_getmwl_locked(struct i3c_master_controller *master,
+-				    struct i3c_device_info *info)
++int i3c_master_getmwl_locked(struct i3c_master_controller *master, struct i3c_device_info *info)
+ {
+ 	struct i3c_ccc_cmd_dest dest;
+ 	struct i3c_ccc_mwl *mwl;
+@@ -1115,6 +1168,52 @@ static int i3c_master_getmwl_locked(struct i3c_master_controller *master,
+ 	return ret;
+ }
+ 
++int i3c_master_setmrl_locked(struct i3c_master_controller *master,
++			     struct i3c_device_info *info, u16 read_len, u8 ibi_len)
++{
++	struct i3c_ccc_cmd_dest dest;
++	struct i3c_ccc_cmd cmd;
++	struct i3c_ccc_mrl *mrl;
++	int ret;
++
++	mrl = i3c_ccc_cmd_dest_init(&dest, info->dyn_addr, sizeof(*mrl));
++	if (!mrl)
++		return -ENOMEM;
++
++	mrl->read_len = cpu_to_be16(read_len);
++	mrl->ibi_len = ibi_len;
++	info->max_read_len = read_len;
++	info->max_ibi_len = mrl->ibi_len;
++	i3c_ccc_cmd_init(&cmd, false, I3C_CCC_SETMRL(false), &dest, 1);
++
++	ret = i3c_master_send_ccc_cmd_locked(master, &cmd);
++	i3c_ccc_cmd_dest_cleanup(&dest);
++
++	return ret;
++}
++
++int i3c_master_setmwl_locked(struct i3c_master_controller *master,
++			     struct i3c_device_info *info, u16 write_len)
++{
++	struct i3c_ccc_cmd_dest dest;
++	struct i3c_ccc_cmd cmd;
++	struct i3c_ccc_mwl *mwl;
++	int ret;
++
++	mwl = i3c_ccc_cmd_dest_init(&dest, info->dyn_addr, sizeof(*mwl));
++	if (!mwl)
++		return -ENOMEM;
++
++	mwl->len = cpu_to_be16(write_len);
++	info->max_write_len = write_len;
++	i3c_ccc_cmd_init(&cmd, false, I3C_CCC_SETMWL(false), &dest, 1);
++
++	ret = i3c_master_send_ccc_cmd_locked(master, &cmd);
++	i3c_ccc_cmd_dest_cleanup(&dest);
++
++	return ret;
++}
++
+ static int i3c_master_getmxds_locked(struct i3c_master_controller *master,
+ 				     struct i3c_device_info *info)
+ {
+@@ -1262,6 +1361,32 @@ static int i3c_master_getdcr_locked(struct i3c_master_controller *master,
+ 	return ret;
+ }
+ 
++int i3c_dev_getstatus_locked(struct i3c_dev_desc *dev,
++			     struct i3c_device_info *info)
++{
++	struct i3c_master_controller *master = i3c_dev_get_master(dev);
++	struct i3c_ccc_getstatus *getsts;
++	struct i3c_ccc_cmd_dest dest;
++	struct i3c_ccc_cmd cmd;
++	int ret;
++
++	getsts = i3c_ccc_cmd_dest_init(&dest, info->dyn_addr, sizeof(*getsts));
++	if (!getsts)
++		return -ENOMEM;
++
++	i3c_ccc_cmd_init(&cmd, true, I3C_CCC_GETSTATUS, &dest, 1);
++	ret = i3c_master_send_ccc_cmd_locked(master, &cmd);
++	if (ret)
++		goto out;
++
++	info->status = be16_to_cpu(getsts->status);
++
++out:
++	i3c_ccc_cmd_dest_cleanup(&dest);
++
++	return ret;
++}
++
+ static int i3c_master_retrieve_dev_info(struct i3c_dev_desc *dev)
+ {
+ 	struct i3c_master_controller *master = i3c_dev_get_master(dev);
+@@ -1480,6 +1605,36 @@ static void i3c_master_detach_i2c_dev(struct i2c_dev_desc *dev)
+ 		master->ops->detach_i2c_dev(dev);
+ }
+ 
++static int i3c_master_add_static_i3c_dev(struct i3c_master_controller *master,
++					  struct i3c_dev_boardinfo *boardinfo)
++{
++	struct i3c_device_info info = {
++		.static_addr = boardinfo->static_addr,
++	};
++	struct i3c_dev_desc *i3cdev;
++	int ret;
++
++	i3cdev = i3c_master_alloc_i3c_dev(master, &info);
++	if (IS_ERR(i3cdev))
++		return -ENOMEM;
++
++	i3cdev->boardinfo = boardinfo;
++	i3cdev->info.static_addr = boardinfo->static_addr;
++	i3cdev->info.pid = boardinfo->pid;
++	i3cdev->info.dyn_addr = boardinfo->static_addr;
++
++	ret = i3c_master_attach_i3c_dev(master, i3cdev);
++	if (ret)
++		goto err_free_dev;
++
++	return 0;
++
++err_free_dev:
++	i3c_master_free_i3c_dev(i3cdev);
++
++	return ret;
++}
++
+ static int i3c_master_early_i3c_dev_add(struct i3c_master_controller *master,
+ 					  struct i3c_dev_boardinfo *boardinfo)
+ {
+@@ -1798,6 +1953,18 @@ static int i3c_master_bus_init(struct i3c_master_controller *master)
+ 	 * i3c_master_add_i3c_dev_locked().
+ 	 */
+ 	list_for_each_entry(i3cboardinfo, &master->boardinfo.i3c, node) {
++		if (!i3cboardinfo->init_dyn_addr && master->bus.jesd403) {
++			/* JESD403 devices only support setaasa */
++			ret = i3c_bus_get_addr_slot_status(&master->bus,
++					i3cboardinfo->static_addr);
++			if (ret != I3C_ADDR_SLOT_FREE) {
++				ret = -EBUSY;
++				goto err_rstdaa;
++			}
++			i3cboardinfo->init_dyn_addr = i3cboardinfo->static_addr;
++			i3c_master_add_static_i3c_dev(master, i3cboardinfo);
++			continue;
++		}
+ 
+ 		/*
+ 		 * We don't reserve a dynamic address for devices that
+@@ -1829,6 +1996,16 @@ static int i3c_master_bus_init(struct i3c_master_controller *master)
+ 			i3c_master_early_i3c_dev_add(master, i3cboardinfo);
+ 	}
+ 
++	if (master->bus.jesd403) {
++		i3c_master_sethid_locked(master);
++		i3c_master_setaasa_locked(master);
++
++		i3c_bus_normaluse_lock(&master->bus);
++		i3c_master_register_new_i3c_devs(master);
++		i3c_bus_normaluse_unlock(&master->bus);
++		return 0;
++	}
++
+ 	ret = i3c_master_do_daa(master);
+ 	if (ret)
+ 		goto err_rstdaa;
+@@ -1948,7 +2125,15 @@ int i3c_master_add_i3c_dev_locked(struct i3c_master_controller *master,
+ 
+ 			if (olddev->ibi->enabled) {
+ 				enable_ibi = true;
+-				i3c_dev_disable_ibi_locked(olddev);
++				ret = i3c_dev_disable_ibi_locked(olddev);
++				/*
++				 * If olddev is not active on the bus,
++				 * disable_ibi will get NACK.
++				 * Set ibi->enabled to false to
++				 * avoid warning message in free_ibi.
++				 */
++				if (ret == I3C_ERROR_M2)
++					olddev->ibi->enabled = false;
+ 			}
+ 
+ 			i3c_dev_free_ibi_locked(olddev);
+@@ -2176,6 +2361,9 @@ static int of_populate_i3c_bus(struct i3c_master_controller *master)
+ 	if (!of_property_read_u32(i3cbus_np, "i3c-scl-hz", &val))
+ 		master->bus.scl_rate.i3c = val;
+ 
++	if (of_property_read_bool(i3cbus_np, "jedec,jesd403"))
++		master->bus.jesd403 = true;
++
+ 	return 0;
+ }
+ 
+@@ -2758,6 +2946,216 @@ void i3c_master_unregister(struct i3c_master_controller *master)
+ }
+ EXPORT_SYMBOL_GPL(i3c_master_unregister);
+ 
++static int i3c_target_bus_init(struct i3c_master_controller *master)
++{
++	return master->target_ops->bus_init(master);
++}
++
++static void i3c_target_bus_cleanup(struct i3c_master_controller *master)
++{
++	if (master->target_ops->bus_cleanup)
++		master->target_ops->bus_cleanup(master);
++}
++
++static void i3c_targetdev_release(struct device *dev)
++{
++	struct i3c_master_controller *master = container_of(dev, struct i3c_master_controller, dev);
++	struct i3c_bus *bus = &master->bus;
++
++	mutex_lock(&i3c_core_lock);
++	idr_remove(&i3c_bus_idr, bus->id);
++	mutex_unlock(&i3c_core_lock);
++
++	of_node_put(dev->of_node);
++}
++
++static void i3c_target_device_release(struct device *dev)
++{
++	struct i3c_device *i3cdev = dev_to_i3cdev(dev);
++	struct i3c_dev_desc *desc = i3cdev->desc;
++
++	kfree(i3cdev);
++	kfree(desc);
++}
++
++static void
++i3c_target_register_new_i3c_dev(struct i3c_master_controller *master, struct i3c_device_info info)
++{
++	struct i3c_dev_desc *desc;
++	int ret;
++
++	desc = kzalloc(sizeof(*desc), GFP_KERNEL);
++	if (!desc)
++		return;
++
++	desc->dev = kzalloc(sizeof(*desc->dev), GFP_KERNEL);
++	if (!desc->dev) {
++		kfree(desc);
++		return;
++	}
++
++	desc->dev->bus = &master->bus;
++	desc->dev->desc = desc;
++	desc->dev->dev.parent = &master->dev;
++	desc->dev->dev.type = &i3c_target_device_type;
++	desc->dev->dev.bus = &i3c_bus_type;
++	desc->dev->dev.release = i3c_target_device_release;
++	desc->info = info;
++	desc->common.master = master;
++	dev_set_name(&desc->dev->dev, "%d-target", master->bus.id);
++
++	ret = device_register(&desc->dev->dev);
++	if (ret)
++		dev_err(&master->dev, "Failed to add I3C target device (err = %d)\n", ret);
++
++	master->this = desc;
++	master->bus.cur_master = master->this;
++}
++
++static void i3c_target_unregister_i3c_dev(struct i3c_master_controller *master)
++{
++	struct i3c_dev_desc *i3cdev = master->this;
++
++	if (device_is_registered(&i3cdev->dev->dev))
++		device_unregister(&i3cdev->dev->dev);
++	else
++		put_device(&i3cdev->dev->dev);
++}
++
++static void i3c_target_read_device_info(struct device_node *np, struct i3c_device_info *info)
++{
++	u64 pid;
++	u32 dcr;
++	int ret;
++
++	ret = of_property_read_u64(np, "pid", &pid);
++	if (ret)
++		info->pid = 0;
++	else
++		info->pid = pid;
++
++	ret = of_property_read_u32(np, "dcr", &dcr);
++	if (ret)
++		info->dcr = 0;
++	else
++		info->dcr = dcr;
++}
++
++static int i3c_target_check_ops(const struct i3c_target_ops *ops)
++{
++	if (!ops || !ops->bus_init)
++		return -EINVAL;
++
++	return 0;
++}
++
++int i3c_target_register(struct i3c_master_controller *master, struct device *parent,
++			const struct i3c_target_ops *ops)
++{
++	struct i3c_bus *i3cbus = i3c_master_get_bus(master);
++	struct i3c_device_info info;
++	int ret;
++
++	ret = i3c_target_check_ops(ops);
++	if (ret)
++		return ret;
++
++	master->dev.parent = parent;
++	master->dev.of_node = of_node_get(parent->of_node);
++	master->dev.bus = &i3c_bus_type;
++	master->dev.release = i3c_targetdev_release;
++	master->target_ops = ops;
++	i3cbus->mode = I3C_BUS_MODE_PURE;
++
++	init_rwsem(&i3cbus->lock);
++	mutex_lock(&i3c_core_lock);
++	ret = idr_alloc(&i3c_bus_idr, i3cbus, 0, 0, GFP_KERNEL);
++	mutex_unlock(&i3c_core_lock);
++	if (ret < 0)
++		return ret;
++	i3cbus->id = ret;
++
++	device_initialize(&master->dev);
++	dev_set_name(&master->dev, "i3c-%d", i3cbus->id);
++
++	ret = device_add(&master->dev);
++	if (ret)
++		goto err_put_device;
++
++	i3c_target_read_device_info(master->dev.of_node, &info);
++
++	i3c_target_register_new_i3c_dev(master, info);
++
++	ret = i3c_target_bus_init(master);
++	if (ret)
++		goto err_cleanup_bus;
++
++	i3c_bus_notify(i3cbus, I3C_NOTIFY_BUS_ADD);
++
++	return 0;
++
++err_cleanup_bus:
++	i3c_target_bus_cleanup(master);
++
++err_put_device:
++	put_device(&master->dev);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(i3c_target_register);
++
++int i3c_target_unregister(struct i3c_master_controller *master)
++{
++	i3c_bus_notify(&master->bus, I3C_NOTIFY_BUS_REMOVE);
++
++	i3c_target_unregister_i3c_dev(master);
++	i3c_target_bus_cleanup(master);
++	device_unregister(&master->dev);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(i3c_target_unregister);
++
++int i3c_target_read_register(struct i3c_device *dev, const struct i3c_target_read_setup *setup)
++{
++	dev->desc->target_info.read_handler = setup->handler;
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(i3c_target_read_register);
++
++int i3c_register(struct i3c_master_controller *master,
++		 struct device *parent,
++		 const struct i3c_master_controller_ops *master_ops,
++		 const struct i3c_target_ops *target_ops,
++		 bool secondary)
++{
++	const char *role;
++	int ret;
++
++	ret = of_property_read_string(parent->of_node, "initial-role", &role);
++	if (ret || !strcmp("primary", role)) {
++		return i3c_master_register(master, parent, master_ops, secondary);
++	} else if (!strcmp("target", role)) {
++		master->target = true;
++		return i3c_target_register(master, parent, target_ops);
++	} else {
++		return -EOPNOTSUPP;
++	}
++}
++EXPORT_SYMBOL_GPL(i3c_register);
++
++int i3c_unregister(struct i3c_master_controller *master)
++{
++	if (master->target)
++		i3c_target_unregister(master);
++	else
++		i3c_master_unregister(master);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(i3c_unregister);
++
+ int i3c_dev_setdasa_locked(struct i3c_dev_desc *dev)
+ {
+ 	struct i3c_master_controller *master;
+@@ -2790,10 +3188,38 @@ int i3c_dev_do_priv_xfers_locked(struct i3c_dev_desc *dev,
+ 	if (!master || !xfers)
+ 		return -EINVAL;
+ 
+-	if (!master->ops->priv_xfers)
+-		return -ENOTSUPP;
++	if (!master->target) {
++		if (!master->ops->priv_xfers)
++			return -EOPNOTSUPP;
++
++		return master->ops->priv_xfers(dev, xfers, nxfers);
++	}
++
++	if (!master->target_ops->priv_xfers)
++		return -EOPNOTSUPP;
+ 
+-	return master->ops->priv_xfers(dev, xfers, nxfers);
++	return master->target_ops->priv_xfers(dev, xfers, nxfers);
++}
++
++int i3c_dev_generate_ibi_locked(struct i3c_dev_desc *dev, const u8 *data, int len)
++
++{
++	struct i3c_master_controller *master;
++
++	if (!dev)
++		return -ENOENT;
++
++	master = i3c_dev_get_master(dev);
++	if (!master)
++		return -EINVAL;
++
++	if (!master->target)
++		return -EINVAL;
++
++	if (!master->target_ops->generate_ibi)
++		return -EOPNOTSUPP;
++
++	return master->target_ops->generate_ibi(dev, data, len);
+ }
+ 
+ int i3c_dev_disable_ibi_locked(struct i3c_dev_desc *dev)
+@@ -2881,6 +3307,45 @@ void i3c_dev_free_ibi_locked(struct i3c_dev_desc *dev)
+ 	dev->ibi = NULL;
+ }
+ 
++int i3c_dev_send_ccc_cmd_locked(struct i3c_dev_desc *dev, u8 ccc_id)
++{
++	struct i3c_master_controller *master = i3c_dev_get_master(dev);
++	int ret;
++
++	switch (ccc_id) {
++	case I3C_CCC_SETAASA:
++		ret = i3c_master_setaasa_locked(master);
++		break;
++	case I3C_CCC_SETHID:
++		ret = i3c_master_sethid_locked(master);
++		break;
++	case I3C_CCC_RSTDAA(false):
++		ret = i3c_master_rstdaa_locked(master, dev->info.dyn_addr);
++		break;
++	case I3C_CCC_RSTDAA(true):
++		ret = i3c_master_rstdaa_locked(master, I3C_BROADCAST_ADDR);
++		break;
++	default:
++		dev_err(&master->dev, "Unpermitted ccc: %x\n", ccc_id);
++		return -ENOTSUPP;
++	}
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(i3c_dev_send_ccc_cmd_locked);
++
++int i3c_for_each_dev(void *data, int (*fn)(struct device *, void *))
++{
++	int res;
++
++	mutex_lock(&i3c_core_lock);
++	res = bus_for_each_dev(&i3c_bus_type, NULL, data, fn);
++	mutex_unlock(&i3c_core_lock);
++
++	return res;
++}
++EXPORT_SYMBOL_GPL(i3c_for_each_dev);
++
+ static int __init i3c_init(void)
+ {
+ 	int res;
+diff --git a/drivers/i3c/master/svc-i3c-master.c b/drivers/i3c/master/svc-i3c-master.c
+index f344f8733f83..1dfd18a136a2 100644
+--- a/drivers/i3c/master/svc-i3c-master.c
++++ b/drivers/i3c/master/svc-i3c-master.c
+@@ -10,17 +10,63 @@
+ #include <linux/bitfield.h>
+ #include <linux/clk.h>
+ #include <linux/completion.h>
++#include <linux/debugfs.h>
++#include <linux/dma-mapping.h>
+ #include <linux/errno.h>
+ #include <linux/i3c/master.h>
++#include <linux/i3c/target.h>
+ #include <linux/interrupt.h>
+ #include <linux/iopoll.h>
+ #include <linux/list.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
++#include <linux/reset.h>
+ #include <linux/pinctrl/consumer.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+ 
++/* Slave Mode Registers */
++#define SVC_I3C_CONFIG      0x004
++#define   SVC_I3C_CONFIG_SLVEN BIT(0)
++#define   SVC_I3C_CONFIG_DDROK BIT(4)
++#define SVC_I3C_STATUS      0x008
++#define   SVC_I3C_STATUS_RXPEND(x) FIELD_GET(SVC_I3C_INT_RXPEND, (x))
++#define   SVC_I3C_STATUS_STREQWR(x) (x & BIT(4))
++#define   SVC_I3C_STATUS_DDRMATCH BIT(16)
++#define   SVC_I3C_STATUS_STOP BIT(10)
++#define SVC_I3C_CTRL        0x00C
++#define   SVC_I3C_CTRL_EVENT(x) FIELD_PREP(GENMASK(1, 0), (x))
++#define   SVC_I3C_CTRL_EVENT_HOT_JOIN 3
++#define   SVC_I3C_CTRL_PENDINT(x) FIELD_PREP(GENMASK(19, 16), (x))
++#define SVC_I3C_INTSET      0x010
++#define   SVC_I3C_INT_STOP BIT(10)
++#define   SVC_I3C_INT_RXPEND BIT(11)
++#define   SVC_I3C_INT_TXNOTFULL BIT(12)
++#define SVC_I3C_INTCLR      0x014
++#define SVC_I3C_INTMASKED   0x018
++#define SVC_I3C_ERRWARN     0x01C
++#define SVC_I3C_DMACTRL     0x020
++#define   SVC_I3C_DMACTRL_DMAFB(x) FIELD_PREP(GENMASK(1, 0), (x))
++#define   SVC_I3C_DMACTRL_DMATB(x) FIELD_PREP(GENMASK(3, 2), (x))
++#define   SVC_I3C_DMACTRL_DMAWIDTH(x) FIELD_PREP(GENMASK(5, 4), (x))
++#define SVC_I3C_DATACTRL    0x02C
++#define   SVC_I3C_DATACTRL_FLUSHTB BIT(0)
++#define   SVC_I3C_DATACTRL_FLUSHRB BIT(1)
++#define   SVC_I3C_DATACTRL_TXFULL BIT(30)
++#define   SVC_I3C_DATACTRL_TXCOUNT(x) FIELD_GET(GENMASK(20, 16), (x))
++#define   SVC_I3C_DATACTRL_RXCOUNT(x) FIELD_GET(GENMASK(28, 24), (x))
++#define SVC_I3C_WDATAB      0x030
++#define SVC_I3C_WDATABE     0x034
++#define SVC_I3C_RDATAB      0x040
++#define SVC_I3C_MAXLIMITS   0x068
++#define   SVC_I3C_MAXLIMITS_MAXWR(x) FIELD_PREP(GENMASK(27, 16), (x))
++#define   SVC_I3C_MAXLIMITS_MAXRD(x) FIELD_PREP(GENMASK(11, 0), (x))
++#define SVC_I3C_PARTNO      0x06C
++#define SVC_I3C_IDEXT       0x070
++#define   SVC_I3C_IDEXT_BCR(x) FIELD_PREP(GENMASK(23 16), (x))
++#define   SVC_I3C_IDEXT_DCR(x) FIELD_PREP(GENMASK(15, 8), (x))
++
+ /* Master Mode Registers */
+ #define SVC_I3C_MCONFIG      0x000
+ #define   SVC_I3C_MCONFIG_MASTER_EN BIT(0)
+@@ -32,18 +78,22 @@
+ #define   SVC_I3C_MCONFIG_ODBAUD(x) FIELD_PREP(GENMASK(23, 16), (x))
+ #define   SVC_I3C_MCONFIG_ODHPP(x) FIELD_PREP(BIT(24), (x))
+ #define   SVC_I3C_MCONFIG_SKEW(x) FIELD_PREP(GENMASK(27, 25), (x))
++#define   SVC_I3C_MCONFIG_SKEW_MASK GENMASK(27, 25)
+ #define   SVC_I3C_MCONFIG_I2CBAUD(x) FIELD_PREP(GENMASK(31, 28), (x))
+ 
+ #define SVC_I3C_MCTRL        0x084
+ #define   SVC_I3C_MCTRL_REQUEST_MASK GENMASK(2, 0)
++#define   SVC_I3C_MCTRL_REQUEST(x) FIELD_GET(GENMASK(2, 0), (x))
+ #define   SVC_I3C_MCTRL_REQUEST_NONE 0
+ #define   SVC_I3C_MCTRL_REQUEST_START_ADDR 1
+ #define   SVC_I3C_MCTRL_REQUEST_STOP 2
+ #define   SVC_I3C_MCTRL_REQUEST_IBI_ACKNACK 3
+ #define   SVC_I3C_MCTRL_REQUEST_PROC_DAA 4
++#define   SVC_I3C_MCTRL_REQUEST_FORCE_EXIT 6
+ #define   SVC_I3C_MCTRL_REQUEST_AUTO_IBI 7
+ #define   SVC_I3C_MCTRL_TYPE_I3C 0
+ #define   SVC_I3C_MCTRL_TYPE_I2C BIT(4)
++#define   SVC_I3C_MCTRL_TYPE_I3C_DDR BIT(5)
+ #define   SVC_I3C_MCTRL_IBIRESP_AUTO 0
+ #define   SVC_I3C_MCTRL_IBIRESP_ACK_WITHOUT_BYTE 0
+ #define   SVC_I3C_MCTRL_IBIRESP_ACK_WITH_BYTE BIT(7)
+@@ -59,6 +109,8 @@
+ #define   SVC_I3C_MSTATUS_STATE(x) FIELD_GET(GENMASK(2, 0), (x))
+ #define   SVC_I3C_MSTATUS_STATE_DAA(x) (SVC_I3C_MSTATUS_STATE(x) == 5)
+ #define   SVC_I3C_MSTATUS_STATE_IDLE(x) (SVC_I3C_MSTATUS_STATE(x) == 0)
++#define   SVC_I3C_MSTATUS_STATE_SLVREQ(x) (SVC_I3C_MSTATUS_STATE(x) == 1)
++#define   SVC_I3C_MSTATUS_STATE_IBIACK(x) (SVC_I3C_MSTATUS_STATE(x) == 6)
+ #define   SVC_I3C_MSTATUS_BETWEEN(x) FIELD_GET(BIT(4), (x))
+ #define   SVC_I3C_MSTATUS_NACKED(x) FIELD_GET(BIT(5), (x))
+ #define   SVC_I3C_MSTATUS_IBITYPE(x) FIELD_GET(GENMASK(7, 6), (x))
+@@ -92,9 +144,13 @@
+ #define SVC_I3C_MINTCLR      0x094
+ #define SVC_I3C_MINTMASKED   0x098
+ #define SVC_I3C_MERRWARN     0x09C
+-#define   SVC_I3C_MERRWARN_NACK BIT(2)
++#define   SVC_I3C_MERRWARN_NACK(x) FIELD_GET(BIT(2), (x))
+ #define   SVC_I3C_MERRWARN_TIMEOUT BIT(20)
++#define   SVC_I3C_MERRWARN_HCRC(x) FIELD_GET(BIT(10), (x))
+ #define SVC_I3C_MDMACTRL     0x0A0
++#define   SVC_I3C_MDMACTRL_DMAFB(x) FIELD_PREP(GENMASK(1, 0), (x))
++#define   SVC_I3C_MDMACTRL_DMATB(x) FIELD_PREP(GENMASK(3, 2), (x))
++#define   SVC_I3C_MDMACTRL_DMAWIDTH(x) FIELD_PREP(GENMASK(5, 4), (x))
+ #define SVC_I3C_MDATACTRL    0x0AC
+ #define   SVC_I3C_MDATACTRL_FLUSHTB BIT(0)
+ #define   SVC_I3C_MDATACTRL_FLUSHRB BIT(1)
+@@ -102,6 +158,7 @@
+ #define   SVC_I3C_MDATACTRL_TXTRIG_FIFO_NOT_FULL GENMASK(5, 4)
+ #define   SVC_I3C_MDATACTRL_RXTRIG_FIFO_NOT_EMPTY 0
+ #define   SVC_I3C_MDATACTRL_RXCOUNT(x) FIELD_GET(GENMASK(28, 24), (x))
++#define   SVC_I3C_MDATACTRL_TXCOUNT(x) FIELD_GET(GENMASK(20, 16), (x))
+ #define   SVC_I3C_MDATACTRL_TXFULL BIT(30)
+ #define   SVC_I3C_MDATACTRL_RXEMPTY BIT(31)
+ 
+@@ -122,11 +179,44 @@
+ #define   SVC_MDYNADDR_VALID BIT(0)
+ #define   SVC_MDYNADDR_ADDR(x) FIELD_PREP(GENMASK(7, 1), (x))
+ 
++#define SVC_I3C_PARTNO       0x06C
++#define SVC_I3C_VENDORID     0x074
++#define   SVC_I3C_VENDORID_VID(x) FIELD_GET(GENMASK(14, 0), (x))
++
+ #define SVC_I3C_MAX_DEVS 32
+ #define SVC_I3C_PM_TIMEOUT_MS 1000
+ 
++#define HDR_COMMAND	0x20
+ /* This parameter depends on the implementation and may be tuned */
+ #define SVC_I3C_FIFO_SIZE 16
++#define SVC_I3C_MAX_IBI_PAYLOAD_SIZE 8
++#define SVC_I3C_MAX_RDTERM 255
++#define SVC_I3C_MAX_PPBAUD 15
++#define SVC_I3C_MAX_PPLOW 15
++#define SVC_I3C_MAX_ODBAUD 255
++#define SVC_I3C_MAX_I2CBAUD 15
++#define I3C_SCL_PP_PERIOD_NS_MIN 40
++#define I3C_SCL_OD_LOW_PERIOD_NS_MIN 200
++
++/* DMA definitions */
++#define MAX_DMA_COUNT		1024
++#define DMA_CH_TX		0
++#define DMA_CH_RX		1
++#define NPCM_GDMA_CTL(n)	(n * 0x20 + 0x00)
++#define   NPCM_GDMA_CTL_GDMAMS(x) FIELD_PREP(GENMASK(3, 2), (x))
++#define   NPCM_GDMA_CTL_TWS(x) FIELD_PREP(GENMASK(13, 12), (x))
++#define   NPCM_GDMA_CTL_GDMAEN	BIT(0)
++#define   NPCM_GDMA_CTL_DAFIX	BIT(6)
++#define   NPCM_GDMA_CTL_SAFIX	BIT(7)
++#define   NPCM_GDMA_CTL_SIEN	BIT(8)
++#define   NPCM_GDMA_CTL_DM	BIT(15)
++#define   NPCM_GDMA_CTL_TC	BIT(18)
++#define NPCM_GDMA_SRCB(n)	(n * 0x20 + 0x04)
++#define NPCM_GDMA_DSTB(n)	(n * 0x20 + 0x08)
++#define NPCM_GDMA_TCNT(n)	(n * 0x20 + 0x0C)
++#define NPCM_GDMA_CSRC(n)	(n * 0x20 + 0x10)
++#define NPCM_GDMA_CDST(n)	(n * 0x20 + 0x14)
++#define NPCM_GDMA_CTCNT(n)	(n * 0x20 + 0x18)
+ 
+ struct svc_i3c_cmd {
+ 	u8 addr;
+@@ -137,6 +227,7 @@ struct svc_i3c_cmd {
+ 	unsigned int actual_len;
+ 	struct i3c_priv_xfer *xfer;
+ 	bool continued;
++	bool use_dma;
+ };
+ 
+ struct svc_i3c_xfer {
+@@ -153,6 +244,14 @@ struct svc_i3c_regs_save {
+ 	u32 mdynaddr;
+ };
+ 
++struct npcm_dma_xfer_desc {
++	const u8 *out;
++	u8 *in;
++	u32 len;
++	u32 actual_len;
++	bool rnw;
++	bool end;
++};
+ /**
+  * struct svc_i3c_master - Silvaco I3C Master structure
+  * @base: I3C master controller
+@@ -163,7 +262,6 @@ struct svc_i3c_regs_save {
+  * @addrs: Array containing the dynamic addresses of each attached device
+  * @descs: Array of descriptors, one per attached device
+  * @hj_work: Hot-join work
+- * @ibi_work: IBI work
+  * @irq: Main interrupt
+  * @pclk: System clock
+  * @fclk: Fast clock (bus)
+@@ -177,7 +275,8 @@ struct svc_i3c_regs_save {
+  * @ibi.slots: Available IBI slots
+  * @ibi.tbq_slot: To be queued IBI slot
+  * @ibi.lock: IBI lock
+- * @lock: Transfer lock, protect between IBI work thread and callbacks from master
++ * @lock: Transfer lock, prevent concurrent daa/priv_xfer/ccc
++ * @req_lock: protect between IBI isr and bus operation request
+  */
+ struct svc_i3c_master {
+ 	struct i3c_master_controller base;
+@@ -188,16 +287,19 @@ struct svc_i3c_master {
+ 	u8 addrs[SVC_I3C_MAX_DEVS];
+ 	struct i3c_dev_desc *descs[SVC_I3C_MAX_DEVS];
+ 	struct work_struct hj_work;
+-	struct work_struct ibi_work;
+ 	int irq;
+ 	struct clk *pclk;
+ 	struct clk *fclk;
+ 	struct clk *sclk;
++	struct {
++		u32 i3c_pp_hi;
++		u32 i3c_pp_lo;
++		u32 i3c_od_hi;
++		u32 i3c_od_lo;
++	} scl_timing;
+ 	struct {
+ 		struct list_head list;
+ 		struct svc_i3c_xfer *cur;
+-		/* Prevent races between transfers */
+-		spinlock_t lock;
+ 	} xferqueue;
+ 	struct {
+ 		unsigned int num_slots;
+@@ -206,7 +308,37 @@ struct svc_i3c_master {
+ 		/* Prevent races within IBI handlers */
+ 		spinlock_t lock;
+ 	} ibi;
++	spinlock_t req_lock;
+ 	struct mutex lock;
++	struct dentry *debugfs;
++
++	struct {
++		struct svc_i3c_xfer *cur;
++		struct svc_i3c_xfer *pending_rd;
++		spinlock_t lock;
++	} slave;
++
++	/* For DMA */
++	void __iomem *dma_regs;
++	void __iomem *dma_mux_regs;
++	bool use_dma;
++	struct completion xfer_comp;
++	char *dma_tx_buf;
++	char *dma_rx_buf;
++	dma_addr_t dma_tx_addr;
++	dma_addr_t dma_rx_addr;
++	struct npcm_dma_xfer_desc dma_xfer;
++
++	bool en_hj;
++	bool hdr_ddr;
++	bool hdr_mode;
++	bool dma_started;
++	bool probe_done;
++
++	/* Statistic report */
++	u8 err_code;
++	u64 err_cnt;
++	u64 ibiwon_cnt;
+ };
+ 
+ /**
+@@ -221,6 +353,14 @@ struct svc_i3c_i2c_dev_data {
+ 	struct i3c_generic_ibi_pool *ibi_pool;
+ };
+ 
++static void svc_i3c_master_stop_dma(struct svc_i3c_master *master);
++
++static void svc_i3c_master_err_stats(struct svc_i3c_master *master, u8 code)
++{
++	master->err_cnt++;
++	master->err_code = code;
++}
++
+ static bool svc_i3c_master_error(struct svc_i3c_master *master)
+ {
+ 	u32 mstatus, merrwarn;
+@@ -247,6 +387,15 @@ static bool svc_i3c_master_error(struct svc_i3c_master *master)
+ 	return false;
+ }
+ 
++static void svc_i3c_master_set_sda_skew(struct svc_i3c_master *master, int skew)
++{
++	u32 val;
++
++	val = readl(master->regs + SVC_I3C_MCONFIG) & ~SVC_I3C_MCONFIG_SKEW_MASK;
++	val |= SVC_I3C_MCONFIG_SKEW(skew);
++	writel(val, master->regs + SVC_I3C_MCONFIG);
++}
++
+ static void svc_i3c_master_enable_interrupts(struct svc_i3c_master *master, u32 mask)
+ {
+ 	writel(mask, master->regs + SVC_I3C_MINTSET);
+@@ -273,6 +422,11 @@ static void svc_i3c_master_flush_fifo(struct svc_i3c_master *master)
+ 	       master->regs + SVC_I3C_MDATACTRL);
+ }
+ 
++static void svc_i3c_master_flush_rx_fifo(struct svc_i3c_master *master)
++{
++	writel(SVC_I3C_MDATACTRL_FLUSHRB, master->regs + SVC_I3C_MDATACTRL);
++}
++
+ static void svc_i3c_master_reset_fifo_trigger(struct svc_i3c_master *master)
+ {
+ 	u32 reg;
+@@ -304,6 +458,7 @@ static void svc_i3c_master_hj_work(struct work_struct *work)
+ 	struct svc_i3c_master *master;
+ 
+ 	master = container_of(work, struct svc_i3c_master, hj_work);
++
+ 	i3c_master_do_daa(&master->base);
+ }
+ 
+@@ -323,9 +478,64 @@ svc_i3c_master_dev_from_addr(struct svc_i3c_master *master,
+ 	return master->descs[i];
+ }
+ 
++static void svc_i3c_master_ack_ibi(struct svc_i3c_master *master,
++				   bool mandatory_byte)
++{
++	unsigned int ibi_ack_nack;
++	u32 reg;
++
++	ibi_ack_nack = SVC_I3C_MCTRL_REQUEST_IBI_ACKNACK;
++	if (mandatory_byte)
++		ibi_ack_nack |= SVC_I3C_MCTRL_IBIRESP_ACK_WITH_BYTE |
++			SVC_I3C_MCTRL_RDTERM(SVC_I3C_MAX_IBI_PAYLOAD_SIZE);
++	else
++		ibi_ack_nack |= SVC_I3C_MCTRL_IBIRESP_ACK_WITHOUT_BYTE;
++
++	writel(ibi_ack_nack, master->regs + SVC_I3C_MCTRL);
++	readl_poll_timeout(master->regs + SVC_I3C_MSTATUS, reg,
++			   SVC_I3C_MSTATUS_MCTRLDONE(reg), 0, 1000);
++}
++
++static void svc_i3c_master_nack_ibi(struct svc_i3c_master *master)
++{
++	u32 reg;
++
++	writel(SVC_I3C_MCTRL_REQUEST_IBI_ACKNACK |
++	       SVC_I3C_MCTRL_IBIRESP_NACK,
++	       master->regs + SVC_I3C_MCTRL);
++	readl_poll_timeout(master->regs + SVC_I3C_MSTATUS, reg,
++			   SVC_I3C_MSTATUS_MCTRLDONE(reg), 0, 1000);
++}
++
+ static void svc_i3c_master_emit_stop(struct svc_i3c_master *master)
+ {
+-	writel(SVC_I3C_MCTRL_REQUEST_STOP, master->regs + SVC_I3C_MCTRL);
++	u32 reg = readl(master->regs + SVC_I3C_MSTATUS);
++
++	/* Do not emit stop in the IDLE or SLVREQ state */
++	if (SVC_I3C_MSTATUS_STATE_IDLE(reg) || SVC_I3C_MSTATUS_STATE_SLVREQ(reg))
++		return;
++
++	/*
++	 * The spurious IBI event may change controller state to IBIACK, switch state
++	 * to NORMACT before emitSTOP request.
++	 */
++	if (SVC_I3C_MSTATUS_STATE_IBIACK(reg)) {
++		svc_i3c_master_nack_ibi(master);
++		writel(SVC_I3C_MINT_IBIWON, master->regs + SVC_I3C_MSTATUS);
++	}
++
++	if (master->hdr_mode) {
++		writel(SVC_I3C_MCTRL_REQUEST_FORCE_EXIT, master->regs + SVC_I3C_MCTRL);
++		master->hdr_mode = false;
++	} else {
++		writel(SVC_I3C_MCTRL_REQUEST_STOP, master->regs + SVC_I3C_MCTRL);
++		/*
++		 * Wait for STOP condition to complete, in case the subsequent
++		 * EmitStartAddr request is issued too early.
++		 */
++		readl_poll_timeout(master->regs + SVC_I3C_MSTATUS, reg,
++				   SVC_I3C_MSTATUS_MCTRLDONE(reg), 0, 1000);
++	}
+ 
+ 	/*
+ 	 * This delay is necessary after the emission of a stop, otherwise eg.
+@@ -342,114 +552,128 @@ static int svc_i3c_master_handle_ibi(struct svc_i3c_master *master,
+ 	struct svc_i3c_i2c_dev_data *data = i3c_dev_get_master_data(dev);
+ 	struct i3c_ibi_slot *slot;
+ 	unsigned int count;
+-	u32 mdatactrl;
+-	int ret, val;
++	u32 mdatactrl, val;
++	int ret;
+ 	u8 *buf;
+ 
++	if (!data) {
++		dev_err_ratelimited(master->dev, "No data for addr 0x%x\n",
++			dev->info.dyn_addr);
++		goto no_ibi_pool;
++	}
++	if (!data->ibi_pool) {
++		dev_err_ratelimited(master->dev, "No ibi pool for addr 0x%x\n",
++			master->addrs[data->index]);
++		goto no_ibi_pool;
++	}
+ 	slot = i3c_generic_ibi_get_free_slot(data->ibi_pool);
+-	if (!slot)
+-		return -ENOSPC;
++	if (!slot) {
++		dev_err_ratelimited(master->dev, "No free ibi slot\n");
++		goto no_ibi_pool;
++	}
+ 
+ 	slot->len = 0;
+ 	buf = slot->data;
+ 
++	/*
++	 * Sometimes I3C HW returns to IDLE state after IBIRCV completed,
++	 * continue when state becomes IDLE.
++	 */
+ 	ret = readl_relaxed_poll_timeout(master->regs + SVC_I3C_MSTATUS, val,
+-						SVC_I3C_MSTATUS_COMPLETE(val), 0, 1000);
++						SVC_I3C_MSTATUS_COMPLETE(val) |
++						SVC_I3C_MSTATUS_STATE_IDLE(val),
++						0, 1000);
+ 	if (ret) {
+ 		dev_err(master->dev, "Timeout when polling for COMPLETE\n");
+-		return ret;
++		/* The event is wrong, do not deliver it to upper layer. */
++		if (SVC_I3C_MSTATUS_RXPEND(val))
++			svc_i3c_master_flush_rx_fifo(master);
++		i3c_generic_ibi_recycle_slot(data->ibi_pool, slot);
++		slot = NULL;
++		svc_i3c_master_err_stats(master, ETIMEDOUT);
++		goto handle_done;
+ 	}
+ 
+ 	while (SVC_I3C_MSTATUS_RXPEND(readl(master->regs + SVC_I3C_MSTATUS))  &&
+-	       slot->len < SVC_I3C_FIFO_SIZE) {
++	       slot->len < SVC_I3C_MAX_IBI_PAYLOAD_SIZE) {
+ 		mdatactrl = readl(master->regs + SVC_I3C_MDATACTRL);
+ 		count = SVC_I3C_MDATACTRL_RXCOUNT(mdatactrl);
+-		readsl(master->regs + SVC_I3C_MRDATAB, buf, count);
++		readsb(master->regs + SVC_I3C_MRDATAB, buf, count);
+ 		slot->len += count;
+ 		buf += count;
+ 	}
+ 
++handle_done:
+ 	master->ibi.tbq_slot = slot;
+ 
+-	return 0;
+-}
+-
+-static void svc_i3c_master_ack_ibi(struct svc_i3c_master *master,
+-				   bool mandatory_byte)
+-{
+-	unsigned int ibi_ack_nack;
+-
+-	ibi_ack_nack = SVC_I3C_MCTRL_REQUEST_IBI_ACKNACK;
+-	if (mandatory_byte)
+-		ibi_ack_nack |= SVC_I3C_MCTRL_IBIRESP_ACK_WITH_BYTE;
+-	else
+-		ibi_ack_nack |= SVC_I3C_MCTRL_IBIRESP_ACK_WITHOUT_BYTE;
+-
+-	writel(ibi_ack_nack, master->regs + SVC_I3C_MCTRL);
+-}
++	return ret;
+ 
+-static void svc_i3c_master_nack_ibi(struct svc_i3c_master *master)
+-{
+-	writel(SVC_I3C_MCTRL_REQUEST_IBI_ACKNACK |
+-	       SVC_I3C_MCTRL_IBIRESP_NACK,
+-	       master->regs + SVC_I3C_MCTRL);
++no_ibi_pool:
++	/* No ibi pool, drop the payload if received  */
++	readl_relaxed_poll_timeout(master->regs + SVC_I3C_MSTATUS, val,
++				   SVC_I3C_MSTATUS_COMPLETE(val) |
++				   SVC_I3C_MSTATUS_STATE_IDLE(val),
++				   0, 1000);
++	svc_i3c_master_flush_rx_fifo(master);
++	return -ENOSPC;
+ }
+ 
+-static void svc_i3c_master_ibi_work(struct work_struct *work)
++static int svc_i3c_master_handle_ibiwon(struct svc_i3c_master *master, bool autoibi)
+ {
+-	struct svc_i3c_master *master = container_of(work, struct svc_i3c_master, ibi_work);
+ 	struct svc_i3c_i2c_dev_data *data;
+ 	unsigned int ibitype, ibiaddr;
+ 	struct i3c_dev_desc *dev;
+-	u32 status, val;
+-	int ret;
+-
+-	mutex_lock(&master->lock);
+-	/*
+-	 * IBIWON may be set before SVC_I3C_MCTRL_REQUEST_AUTO_IBI, causing
+-	 * readl_relaxed_poll_timeout() to return immediately. Consequently,
+-	 * ibitype will be 0 since it was last updated only after the 8th SCL
+-	 * cycle, leading to missed client IBI handlers.
+-	 *
+-	 * A typical scenario is when IBIWON occurs and bus arbitration is lost
+-	 * at svc_i3c_master_priv_xfers().
+-	 *
+-	 * Clear SVC_I3C_MINT_IBIWON before sending SVC_I3C_MCTRL_REQUEST_AUTO_IBI.
+-	 */
+-	writel(SVC_I3C_MINT_IBIWON, master->regs + SVC_I3C_MSTATUS);
+-
+-	/* Acknowledge the incoming interrupt with the AUTOIBI mechanism */
+-	writel(SVC_I3C_MCTRL_REQUEST_AUTO_IBI |
+-	       SVC_I3C_MCTRL_IBIRESP_AUTO,
+-	       master->regs + SVC_I3C_MCTRL);
+-
+-	/* Wait for IBIWON, should take approximately 100us */
+-	ret = readl_relaxed_poll_timeout(master->regs + SVC_I3C_MSTATUS, val,
+-					 SVC_I3C_MSTATUS_IBIWON(val), 0, 1000);
+-	if (ret) {
+-		dev_err(master->dev, "Timeout when polling for IBIWON\n");
+-		svc_i3c_master_emit_stop(master);
+-		goto reenable_ibis;
+-	}
++	u32 status;
++	int ret = 0;
+ 
+ 	status = readl(master->regs + SVC_I3C_MSTATUS);
+ 	ibitype = SVC_I3C_MSTATUS_IBITYPE(status);
+ 	ibiaddr = SVC_I3C_MSTATUS_IBIADDR(status);
+ 
++	dev_dbg(master->dev, "ibitype=%d ibiaddr=%d\n", ibitype, ibiaddr);
++	dev_dbg(master->dev, "ibiwon: mctrl=0x%x mstatus=0x%x\n",
++		readl(master->regs + SVC_I3C_MCTRL), status);
+ 	/* Handle the critical responses to IBI's */
+ 	switch (ibitype) {
+ 	case SVC_I3C_MSTATUS_IBITYPE_IBI:
+ 		dev = svc_i3c_master_dev_from_addr(master, ibiaddr);
+-		if (!dev)
+-			svc_i3c_master_nack_ibi(master);
+-		else
+-			svc_i3c_master_handle_ibi(master, dev);
++		/* Bypass the invalid ibi with address 0 */
++		if (!dev || ibiaddr == 0) {
++			if (!autoibi) {
++				svc_i3c_master_nack_ibi(master);
++				break;
++			}
++			/*
++			 * Wait for complete to make sure the subsequent emitSTOP
++			 * request will be performed in the correct state(NORMACT).
++			 */
++			readl_relaxed_poll_timeout(master->regs + SVC_I3C_MSTATUS, status,
++						   SVC_I3C_MSTATUS_COMPLETE(status),
++						   0, 1000);
++			/* Flush the garbage data */
++			if (SVC_I3C_MSTATUS_RXPEND(status))
++				svc_i3c_master_flush_rx_fifo(master);
++			break;
++		}
++		if (!autoibi) {
++			if (dev->info.bcr & I3C_BCR_IBI_PAYLOAD)
++				svc_i3c_master_ack_ibi(master, true);
++			else
++				svc_i3c_master_ack_ibi(master, false);
++		}
++		svc_i3c_master_handle_ibi(master, dev);
+ 		break;
+ 	case SVC_I3C_MSTATUS_IBITYPE_HOT_JOIN:
+ 		svc_i3c_master_ack_ibi(master, false);
+ 		break;
+ 	case SVC_I3C_MSTATUS_IBITYPE_MASTER_REQUEST:
+ 		svc_i3c_master_nack_ibi(master);
++		status = readl(master->regs + SVC_I3C_MSTATUS);
++		/* Invalid event may be reported as MR request
++		 * and sometimes produce dummy bytes. Flush the garbage data.
++		 */
++		if (SVC_I3C_MSTATUS_RXPEND(status))
++			svc_i3c_master_flush_rx_fifo(master);
+ 		break;
+ 	default:
+ 		break;
+@@ -468,48 +692,169 @@ static void svc_i3c_master_ibi_work(struct work_struct *work)
+ 			master->ibi.tbq_slot = NULL;
+ 		}
+ 
+-		svc_i3c_master_emit_stop(master);
+-
+-		goto reenable_ibis;
++		dev_err(master->dev, "svc_i3c_master_error in ibiwon\n");
++		/*
++		 * No need to emit stop here because the caller should do it
++		 * if return error
++		 */
++		ret = -EIO;
++		svc_i3c_master_err_stats(master, EIO);
++		goto clear_ibiwon;
+ 	}
+ 
+ 	/* Handle the non critical tasks */
+ 	switch (ibitype) {
+ 	case SVC_I3C_MSTATUS_IBITYPE_IBI:
+-		if (dev) {
++		/*
++		 * Sometimes I3C HW returns to IDLE state after IBIRCV completed,
++		 * do not emit STOP in the idle state.
++		 */
++		svc_i3c_master_emit_stop(master);
++		if (dev && master->ibi.tbq_slot) {
+ 			i3c_master_queue_ibi(dev, master->ibi.tbq_slot);
+ 			master->ibi.tbq_slot = NULL;
+ 		}
+-		svc_i3c_master_emit_stop(master);
+ 		break;
+ 	case SVC_I3C_MSTATUS_IBITYPE_HOT_JOIN:
++		/* Emit stop to avoid the INVREQ error after DAA process */
++		svc_i3c_master_emit_stop(master);
+ 		queue_work(master->base.wq, &master->hj_work);
+ 		break;
+ 	case SVC_I3C_MSTATUS_IBITYPE_MASTER_REQUEST:
++		ret = -EOPNOTSUPP;
++		svc_i3c_master_err_stats(master, EOPNOTSUPP);
+ 	default:
+ 		break;
+ 	}
+ 
+-reenable_ibis:
+-	svc_i3c_master_enable_interrupts(master, SVC_I3C_MINT_SLVSTART);
+-	mutex_unlock(&master->lock);
++clear_ibiwon:
++	/* clear IBIWON status */
++	writel(SVC_I3C_MINT_IBIWON, master->regs + SVC_I3C_MSTATUS);
++	return ret;
++}
++
++static void svc_i3c_master_ibi_isr(struct svc_i3c_master *master)
++{
++	u32 val, mstatus;
++	int ret;
++
++	spin_lock(&master->req_lock);
++
++	/* Check slave ibi handled not yet */
++	mstatus = readl(master->regs + SVC_I3C_MSTATUS);
++	if (!SVC_I3C_MSTATUS_STATE_SLVREQ(mstatus))
++		goto ibi_out;
++
++	/*
++	 * IBIWON may be set before SVC_I3C_MCTRL_REQUEST_AUTO_IBI, causing
++	 * readl_relaxed_poll_timeout() to return immediately. Consequently,
++	 * ibitype will be 0 since it was last updated only after the 8th SCL
++	 * cycle, leading to missed client IBI handlers.
++	 *
++	 * A typical scenario is when IBIWON occurs and bus arbitration is lost
++	 * at svc_i3c_master_priv_xfers().
++	 *
++	 * Clear SVC_I3C_MINT_IBIWON before sending SVC_I3C_MCTRL_REQUEST_AUTO_IBI.
++	 */
++	writel(SVC_I3C_MINT_IBIWON, master->regs + SVC_I3C_MSTATUS);
++
++	/* Acknowledge the incoming interrupt with the AUTOIBI mechanism */
++	writel(SVC_I3C_MCTRL_REQUEST_AUTO_IBI |
++	       SVC_I3C_MCTRL_IBIRESP_AUTO |
++	       SVC_I3C_MCTRL_RDTERM(SVC_I3C_MAX_IBI_PAYLOAD_SIZE),
++	       master->regs + SVC_I3C_MCTRL);
++
++	/* Wait for IBIWON, should take approximately 100us */
++	ret = readl_relaxed_poll_timeout_atomic(master->regs + SVC_I3C_MSTATUS, val,
++					 SVC_I3C_MSTATUS_IBIWON(val), 0, 1000);
++	if (ret) {
++		/* Cancle AUTOIBI if not started */
++		val = readl(master->regs + SVC_I3C_MCTRL);
++		if (SVC_I3C_MCTRL_REQUEST(val) == SVC_I3C_MCTRL_REQUEST_AUTO_IBI)
++			writel(0, master->regs + SVC_I3C_MCTRL);
++
++		dev_err(master->dev, "Timeout when polling for IBIWON\n");
++		svc_i3c_master_clear_merrwarn(master);
++		svc_i3c_master_emit_stop(master);
++		svc_i3c_master_err_stats(master, ETIMEDOUT);
++		goto ibi_out;
++	}
++
++	if (svc_i3c_master_handle_ibiwon(master, true))
++		svc_i3c_master_emit_stop(master);
++ibi_out:
++	spin_unlock(&master->req_lock);
+ }
+ 
+ static irqreturn_t svc_i3c_master_irq_handler(int irq, void *dev_id)
+ {
+ 	struct svc_i3c_master *master = (struct svc_i3c_master *)dev_id;
+-	u32 active = readl(master->regs + SVC_I3C_MSTATUS);
++	u32 active = readl(master->regs + SVC_I3C_MINTMASKED), mstatus;
++	struct npcm_dma_xfer_desc *xfer = &master->dma_xfer;
++	int ch = xfer->rnw ? DMA_CH_RX : DMA_CH_TX;
++	u32 count;
++
++	if (SVC_I3C_MSTATUS_COMPLETE(active)) {
++		/* Clear COMPLETE status before emit STOP */
++		writel(SVC_I3C_MINT_COMPLETE, master->regs + SVC_I3C_MSTATUS);
++		/* Disable COMPLETE interrupt */
++		writel(SVC_I3C_MINT_COMPLETE, master->regs + SVC_I3C_MINTCLR);
++
++		svc_i3c_master_stop_dma(master);
++		if (master->dma_xfer.end)
++			svc_i3c_master_emit_stop(master);
++
++		/* Get the DMA transfer count */
++		count = readl(master->dma_regs + NPCM_GDMA_CTCNT(ch));
++		count = (count > xfer->len) ? 0 :
++			(xfer->len - count);
++		dev_dbg(master->dev, "dma xfer count %u\n", count);
++		if (xfer->rnw)
++			memcpy(xfer->in, master->dma_rx_buf, count);
++		if (count != xfer->len)
++			dev_dbg(master->dev, "short dma xfer(%s), want %d transfer %d\n",
++				xfer->rnw ? "R" : "W", xfer->len, count);
++		xfer->actual_len = count;
++
++
++		complete(&master->xfer_comp);
++
++		return IRQ_HANDLED;
++	}
+ 
+-	if (!SVC_I3C_MSTATUS_SLVSTART(active))
+-		return IRQ_NONE;
++	if (SVC_I3C_MSTATUS_SLVSTART(active)) {
++		/* Clear the interrupt status */
++		writel(SVC_I3C_MINT_SLVSTART, master->regs + SVC_I3C_MSTATUS);
+ 
+-	/* Clear the interrupt status */
+-	writel(SVC_I3C_MINT_SLVSTART, master->regs + SVC_I3C_MSTATUS);
++		/* Read I3C state */
++		mstatus = readl(master->regs + SVC_I3C_MSTATUS);
+ 
+-	svc_i3c_master_disable_interrupts(master);
++		if (SVC_I3C_MSTATUS_STATE_SLVREQ(mstatus)) {
++			svc_i3c_master_ibi_isr(master);
++		} else {
++			/*
++			 * Workaround:
++			 * SlaveStart event under bad signals condition. SLVSTART bit in
++			 * MSTATUS may set even slave device doesn't holding I3C_SDA low,
++			 * but actual SlaveStart event may happened concurently in this
++			 * bad signals condition handler. Give a chance to check current
++			 * work state and intmask to avoid actual SlaveStart cannot be
++			 * trigger after we clear SlaveStart interrupt status.
++			 */
++
++			/* Check if state change after we clear interrupt status */
++			active = readl(master->regs + SVC_I3C_MINTMASKED);
++			mstatus = readl(master->regs + SVC_I3C_MSTATUS);
+ 
+-	/* Handle the interrupt in a non atomic context */
+-	queue_work(master->base.wq, &master->ibi_work);
++			if (SVC_I3C_MSTATUS_STATE_SLVREQ(mstatus)) {
++				if (!SVC_I3C_MSTATUS_SLVSTART(active)) {
++					svc_i3c_master_ibi_isr(master);
++				} else {
++					/* handle interrupt in next time */
++				}
++			}
++		}
++	}
+ 
+ 	return IRQ_HANDLED;
+ }
+@@ -520,8 +865,10 @@ static int svc_i3c_master_bus_init(struct i3c_master_controller *m)
+ 	struct i3c_bus *bus = i3c_master_get_bus(m);
+ 	struct i3c_device_info info = {};
+ 	unsigned long fclk_rate, fclk_period_ns;
+-	unsigned int high_period_ns, od_low_period_ns;
+-	u32 ppbaud, pplow, odhpp, odbaud, odstop, i2cbaud, reg;
++	unsigned long i3c_scl_rate, i2c_scl_rate;
++	unsigned int pp_high_period_ns, od_low_period_ns, i2c_period_ns;
++	unsigned int scl_period_ns;
++	u32 ppbaud, pplow, odhpp, odbaud, i2cbaud, reg;
+ 	int ret;
+ 
+ 	ret = pm_runtime_resume_and_get(master->dev);
+@@ -542,52 +889,68 @@ static int svc_i3c_master_bus_init(struct i3c_master_controller *m)
+ 	fclk_period_ns = DIV_ROUND_UP(1000000000, fclk_rate);
+ 
+ 	/*
+-	 * Using I3C Push-Pull mode, target is 12.5MHz/80ns period.
+-	 * Simplest configuration is using a 50% duty-cycle of 40ns.
++	 * Configure for Push-Pull mode.
+ 	 */
+-	ppbaud = DIV_ROUND_UP(40, fclk_period_ns) - 1;
+-	pplow = 0;
++	if (master->scl_timing.i3c_pp_hi >= I3C_SCL_PP_PERIOD_NS_MIN &&
++	    master->scl_timing.i3c_pp_lo >= master->scl_timing.i3c_pp_hi) {
++		ppbaud = DIV_ROUND_UP(master->scl_timing.i3c_pp_hi, fclk_period_ns) - 1;
++		if (ppbaud > SVC_I3C_MAX_PPBAUD)
++			ppbaud = SVC_I3C_MAX_PPBAUD;
++		pplow = DIV_ROUND_UP(master->scl_timing.i3c_pp_lo, fclk_period_ns)
++			- (ppbaud + 1);
++		if (pplow > SVC_I3C_MAX_PPLOW)
++			pplow = SVC_I3C_MAX_PPLOW;
++		bus->scl_rate.i3c = 1000000000 / (((ppbaud + 1) * 2 + pplow) * fclk_period_ns);
++	} else {
++		scl_period_ns = DIV_ROUND_UP(1000000000, bus->scl_rate.i3c);
++		if (bus->scl_rate.i3c == 10000000) {
++			/* Workaround for npcm8xx: 40/60 ns */
++			ppbaud = DIV_ROUND_UP(40, fclk_period_ns) - 1;
++			pplow = DIV_ROUND_UP(20, fclk_period_ns);
++		} else {
++			/* 50% duty-cycle */
++			ppbaud = DIV_ROUND_UP((scl_period_ns / 2), fclk_period_ns) - 1;
++			pplow = 0;
++		}
++		if (ppbaud > SVC_I3C_MAX_PPBAUD)
++			ppbaud = SVC_I3C_MAX_PPBAUD;
++	}
++	pp_high_period_ns = (ppbaud + 1) * fclk_period_ns;
+ 
+ 	/*
+-	 * Using I3C Open-Drain mode, target is 4.17MHz/240ns with a
+-	 * duty-cycle tuned so that high levels are filetered out by
+-	 * the 50ns filter (target being 40ns).
++	 * Configure for Open-Drain mode.
+ 	 */
+-	odhpp = 1;
+-	high_period_ns = (ppbaud + 1) * fclk_period_ns;
+-	odbaud = DIV_ROUND_UP(240 - high_period_ns, high_period_ns) - 1;
+-	od_low_period_ns = (odbaud + 1) * high_period_ns;
+-
+-	switch (bus->mode) {
+-	case I3C_BUS_MODE_PURE:
+-		i2cbaud = 0;
+-		odstop = 0;
+-		break;
+-	case I3C_BUS_MODE_MIXED_FAST:
+-	case I3C_BUS_MODE_MIXED_LIMITED:
+-		/*
+-		 * Using I2C Fm+ mode, target is 1MHz/1000ns, the difference
+-		 * between the high and low period does not really matter.
+-		 */
+-		i2cbaud = DIV_ROUND_UP(1000, od_low_period_ns) - 2;
+-		odstop = 1;
+-		break;
+-	case I3C_BUS_MODE_MIXED_SLOW:
+-		/*
+-		 * Using I2C Fm mode, target is 0.4MHz/2500ns, with the same
+-		 * constraints as the FM+ mode.
+-		 */
+-		i2cbaud = DIV_ROUND_UP(2500, od_low_period_ns) - 2;
+-		odstop = 1;
+-		break;
+-	default:
+-		goto rpm_out;
++	if (master->scl_timing.i3c_od_hi >= pp_high_period_ns &&
++	    master->scl_timing.i3c_od_lo >= I3C_SCL_OD_LOW_PERIOD_NS_MIN) {
++		if (master->scl_timing.i3c_od_hi == pp_high_period_ns)
++			odhpp = 1;
++		else
++			odhpp = 0;
++		odbaud = DIV_ROUND_UP(master->scl_timing.i3c_od_lo, pp_high_period_ns) - 1;
++	} else {
++		/* Set default OD timing: 1MHz/1000ns with 50% duty cycle */
++		odhpp = 0;
++		odbaud = DIV_ROUND_UP(500, pp_high_period_ns) - 1;
+ 	}
++	if (odbaud > SVC_I3C_MAX_ODBAUD)
++		odbaud = SVC_I3C_MAX_ODBAUD;
++	od_low_period_ns = (odbaud + 1) * pp_high_period_ns;
++
++	/* Configure for I2C mode */
++	i2c_period_ns = DIV_ROUND_UP(1000000000, bus->scl_rate.i2c);
++	if (i2c_period_ns < od_low_period_ns * 2)
++		i2c_period_ns = od_low_period_ns * 2;
++	i2cbaud = DIV_ROUND_UP(i2c_period_ns, od_low_period_ns) - 2;
++	if (i2cbaud > SVC_I3C_MAX_I2CBAUD)
++		i2cbaud = SVC_I3C_MAX_I2CBAUD;
++
++	i3c_scl_rate = 1000000000 / (((ppbaud + 1) * 2 + pplow) * fclk_period_ns);
++	i2c_scl_rate = 1000000000 / ((i2cbaud + 2) * od_low_period_ns);
+ 
+ 	reg = SVC_I3C_MCONFIG_MASTER_EN |
+ 	      SVC_I3C_MCONFIG_DISTO(0) |
+-	      SVC_I3C_MCONFIG_HKEEP(0) |
+-	      SVC_I3C_MCONFIG_ODSTOP(odstop) |
++	      SVC_I3C_MCONFIG_HKEEP(3) |
++	      SVC_I3C_MCONFIG_ODSTOP(1) |
+ 	      SVC_I3C_MCONFIG_PPBAUD(ppbaud) |
+ 	      SVC_I3C_MCONFIG_PPLOW(pplow) |
+ 	      SVC_I3C_MCONFIG_ODBAUD(odbaud) |
+@@ -596,12 +959,28 @@ static int svc_i3c_master_bus_init(struct i3c_master_controller *m)
+ 	      SVC_I3C_MCONFIG_I2CBAUD(i2cbaud);
+ 	writel(reg, master->regs + SVC_I3C_MCONFIG);
+ 
++	dev_dbg(master->dev, "dts: i3c rate=%lu, i2c rate=%lu\n",
++		bus->scl_rate.i3c, bus->scl_rate.i2c);
++	dev_info(master->dev, "fclk=%lu, period_ns=%lu\n", fclk_rate, fclk_period_ns);
++	dev_info(master->dev, "i3c scl_rate=%lu\n", i3c_scl_rate);
++	dev_info(master->dev, "i2c scl_rate=%lu\n", i2c_scl_rate);
++	dev_info(master->dev, "pp_high=%u, pp_low=%lu\n", pp_high_period_ns,
++			(ppbaud + 1 + pplow) * fclk_period_ns);
++	dev_info(master->dev, "od_high=%d, od_low=%d\n", odhpp ? pp_high_period_ns : od_low_period_ns,
++		 od_low_period_ns);
++	dev_dbg(master->dev, "i2c_high=%u, i2c_low=%u\n", ((i2cbaud >> 1) + 1) * od_low_period_ns,
++			((i2cbaud >> 1) + 1 + (i2cbaud % 2)) * od_low_period_ns);
++	dev_dbg(master->dev, "ppbaud=%d, pplow=%d, odbaud=%d, i2cbaud=%d\n",
++		ppbaud, pplow, odbaud, i2cbaud);
++	dev_info(master->dev, "mconfig=0x%x\n", readl(master->regs + SVC_I3C_MCONFIG));
+ 	/* Master core's registration */
+ 	ret = i3c_master_get_free_addr(m, 0);
+ 	if (ret < 0)
+ 		goto rpm_out;
+ 
+ 	info.dyn_addr = ret;
++	reg = readl(master->regs + SVC_I3C_VENDORID);
++	info.pid = (SVC_I3C_VENDORID_VID(reg) << 33 ) | readl(master->regs + SVC_I3C_PARTNO);
+ 
+ 	writel(SVC_MDYNADDR_VALID | SVC_MDYNADDR_ADDR(info.dyn_addr),
+ 	       master->regs + SVC_I3C_MDYNADDR);
+@@ -771,14 +1150,18 @@ static int svc_i3c_master_do_daa_locked(struct svc_i3c_master *master,
+ {
+ 	u64 prov_id[SVC_I3C_MAX_DEVS] = {}, nacking_prov_id = 0;
+ 	unsigned int dev_nb = 0, last_addr = 0;
++	unsigned long start = jiffies;
+ 	u32 reg;
+ 	int ret, i;
++	int dyn_addr;
++
++	svc_i3c_master_flush_fifo(master);
+ 
+ 	while (true) {
+ 		/* Enter/proceed with DAA */
+ 		writel(SVC_I3C_MCTRL_REQUEST_PROC_DAA |
+ 		       SVC_I3C_MCTRL_TYPE_I3C |
+-		       SVC_I3C_MCTRL_IBIRESP_NACK |
++		       SVC_I3C_MCTRL_IBIRESP_MANUAL |
+ 		       SVC_I3C_MCTRL_DIR(SVC_I3C_MCTRL_DIR_WRITE),
+ 		       master->regs + SVC_I3C_MCTRL);
+ 
+@@ -786,17 +1169,44 @@ static int svc_i3c_master_do_daa_locked(struct svc_i3c_master *master,
+ 		 * Either one slave will send its ID, or the assignment process
+ 		 * is done.
+ 		 */
+-		ret = readl_poll_timeout_atomic(master->regs + SVC_I3C_MSTATUS,
++		ret = readl_relaxed_poll_timeout_atomic(master->regs + SVC_I3C_MSTATUS,
+ 						reg,
+ 						SVC_I3C_MSTATUS_RXPEND(reg) |
+ 						SVC_I3C_MSTATUS_MCTRLDONE(reg),
+-						1, 1000);
++						0, 1000);
+ 		if (ret)
+ 			return ret;
+ 
++		if (time_after(jiffies, start + msecs_to_jiffies(3000))) {
++			svc_i3c_master_emit_stop(master);
++			dev_info(master->dev, "do_daa expired\n");
++			break;
++		}
++		/* runtime do_daa may ibiwon by others slave devices */
++		if (SVC_I3C_MSTATUS_IBIWON(reg)) {
++			ret = svc_i3c_master_handle_ibiwon(master, false);
++			if (ret) {
++				dev_err(master->dev, "daa: handle ibi event fail, ret=%d\n", ret);
++				return ret;
++			}
++			writel(SVC_I3C_MINT_MCTRLDONE, master->regs + SVC_I3C_MSTATUS);
++			continue;
++		}
++
++		if (dev_nb == SVC_I3C_MAX_DEVS) {
++			svc_i3c_master_emit_stop(master);
++			dev_info(master->dev, "Reach max devs\n");
++			break;
++		}
+ 		if (SVC_I3C_MSTATUS_RXPEND(reg)) {
+ 			u8 data[6];
+ 
++			/* Give the slave device a suitable dynamic address */
++			dyn_addr = i3c_master_get_free_addr(&master->base, last_addr + 1);
++			if (dyn_addr < 0)
++				return dyn_addr;
++			writel(dyn_addr, master->regs + SVC_I3C_MWDATAB);
++
+ 			/*
+ 			 * We only care about the 48-bit provisional ID yet to
+ 			 * be sure a device does not nack an address twice.
+@@ -814,8 +1224,13 @@ static int svc_i3c_master_do_daa_locked(struct svc_i3c_master *master,
+ 			if (ret)
+ 				return ret;
+ 		} else if (SVC_I3C_MSTATUS_MCTRLDONE(reg)) {
+-			if (SVC_I3C_MSTATUS_STATE_IDLE(reg) &&
++			if ((SVC_I3C_MSTATUS_STATE_IDLE(reg) |
++			     SVC_I3C_MSTATUS_STATE_SLVREQ(reg)) &&
+ 			    SVC_I3C_MSTATUS_COMPLETE(reg)) {
++				/*
++				 * Sometimes the controller state is SLVREQ after
++				 * DAA request completed, treat it as normal end.
++				 */
+ 				/*
+ 				 * All devices received and acked they dynamic
+ 				 * address, this is the natural end of the DAA
+@@ -824,8 +1239,10 @@ static int svc_i3c_master_do_daa_locked(struct svc_i3c_master *master,
+ 				break;
+ 			} else if (SVC_I3C_MSTATUS_NACKED(reg)) {
+ 				/* No I3C devices attached */
+-				if (dev_nb == 0)
++				if (dev_nb == 0) {
++					svc_i3c_master_emit_stop(master);
+ 					break;
++				}
+ 
+ 				/*
+ 				 * A slave device nacked the address, this is
+@@ -857,16 +1274,9 @@ static int svc_i3c_master_do_daa_locked(struct svc_i3c_master *master,
+ 		if (ret)
+ 			return ret;
+ 
+-		/* Give the slave device a suitable dynamic address */
+-		ret = i3c_master_get_free_addr(&master->base, last_addr + 1);
+-		if (ret < 0)
+-			return ret;
+-
+-		addrs[dev_nb] = ret;
++		addrs[dev_nb] = dyn_addr;
+ 		dev_dbg(master->dev, "DAA: device %d assigned to 0x%02x\n",
+ 			dev_nb, addrs[dev_nb]);
+-
+-		writel(addrs[dev_nb], master->regs + SVC_I3C_MWDATAB);
+ 		last_addr = addrs[dev_nb++];
+ 	}
+ 
+@@ -885,8 +1295,10 @@ static int svc_i3c_update_ibirules(struct svc_i3c_master *master)
+ 
+ 	/* Create the IBIRULES register for both cases */
+ 	i3c_bus_for_each_i3cdev(&master->base.bus, dev) {
+-		if (I3C_BCR_DEVICE_ROLE(dev->info.bcr) == I3C_BCR_I3C_MASTER)
+-			continue;
++		if (I3C_BCR_DEVICE_ROLE(dev->info.bcr) == I3C_BCR_I3C_MASTER) {
++			if (!(dev->info.bcr & I3C_BCR_IBI_REQ_CAP))
++				continue;
++		}
+ 
+ 		if (dev->info.bcr & I3C_BCR_IBI_PAYLOAD) {
+ 			reg_mbyte |= SVC_I3C_IBIRULES_ADDR(mbyte_addr_ok,
+@@ -933,8 +1345,8 @@ static int svc_i3c_master_do_daa(struct i3c_master_controller *m)
+ {
+ 	struct svc_i3c_master *master = to_svc_i3c_master(m);
+ 	u8 addrs[SVC_I3C_MAX_DEVS];
+-	unsigned long flags;
+ 	unsigned int dev_nb;
++	unsigned long flags;
+ 	int ret, i;
+ 
+ 	ret = pm_runtime_resume_and_get(master->dev);
+@@ -943,9 +1355,18 @@ static int svc_i3c_master_do_daa(struct i3c_master_controller *m)
+ 		return ret;
+ 	}
+ 
+-	spin_lock_irqsave(&master->xferqueue.lock, flags);
++	mutex_lock(&master->lock);
++	spin_lock_irqsave(&master->req_lock, flags);
++	/*
++	 * Fix SCL/SDA timing issue during DAA.
++	 * Set SKEW bit to 1 before initiating a DAA, set SKEW bit to 0
++	 * after DAA is completed.
++	 */
++	svc_i3c_master_set_sda_skew(master, 1);
+ 	ret = svc_i3c_master_do_daa_locked(master, addrs, &dev_nb);
+-	spin_unlock_irqrestore(&master->xferqueue.lock, flags);
++	svc_i3c_master_set_sda_skew(master, 0);
++	spin_unlock_irqrestore(&master->req_lock, flags);
++	mutex_unlock(&master->lock);
+ 	if (ret) {
+ 		svc_i3c_master_emit_stop(master);
+ 		svc_i3c_master_clear_merrwarn(master);
+@@ -956,7 +1377,8 @@ static int svc_i3c_master_do_daa(struct i3c_master_controller *m)
+ 	for (i = 0; i < dev_nb; i++) {
+ 		ret = i3c_master_add_i3c_dev_locked(m, addrs[i]);
+ 		if (ret)
+-			goto rpm_out;
++			dev_err(master->dev, "Unable to add i3c dev@0x%x, err %d\n",
++				addrs[i], ret);
+ 	}
+ 
+ 	/* Configure IBI auto-rules */
+@@ -968,6 +1390,10 @@ static int svc_i3c_master_do_daa(struct i3c_master_controller *m)
+ 	pm_runtime_mark_last_busy(master->dev);
+ 	pm_runtime_put_autosuspend(master->dev);
+ 
++	/* No Slave ACK */
++	if (ret == -EIO)
++		return 0;
++
+ 	return ret;
+ }
+ 
+@@ -978,15 +1404,16 @@ static int svc_i3c_master_read(struct svc_i3c_master *master,
+ 	u32 mdctrl, mstatus;
+ 	bool completed = false;
+ 	unsigned int count;
+-	unsigned long start = jiffies;
++	ktime_t timeout;
+ 
++	timeout = ktime_add_ms(ktime_get(), 1000);
+ 	while (!completed) {
+ 		mstatus = readl(master->regs + SVC_I3C_MSTATUS);
+ 		if (SVC_I3C_MSTATUS_COMPLETE(mstatus) != 0)
+ 			completed = true;
+ 
+-		if (time_after(jiffies, start + msecs_to_jiffies(1000))) {
+-			dev_dbg(master->dev, "I3C read timeout\n");
++		if (ktime_compare(ktime_get(), timeout) > 0) {
++			dev_err(master->dev, "I3C read timeout, count=%d/%d\n", offset, len);
+ 			return -ETIMEDOUT;
+ 		}
+ 
+@@ -1032,82 +1459,253 @@ static int svc_i3c_master_write(struct svc_i3c_master *master,
+ 	return 0;
+ }
+ 
+-static int svc_i3c_master_xfer(struct svc_i3c_master *master,
+-			       bool rnw, unsigned int xfer_type, u8 addr,
+-			       u8 *in, const u8 *out, unsigned int xfer_len,
+-			       unsigned int *actual_len, bool continued)
++static void svc_i3c_master_stop_dma(struct svc_i3c_master *master)
+ {
+-	int retry = 2;
+-	u32 reg;
+-	int ret;
++	writel(0, master->dma_regs + NPCM_GDMA_CTL(DMA_CH_TX));
++	writel(0, master->dma_regs + NPCM_GDMA_CTL(DMA_CH_RX));
++	writel(0, master->regs + SVC_I3C_MDMACTRL);
+ 
+-	/* clean SVC_I3C_MINT_IBIWON w1c bits */
+-	writel(SVC_I3C_MINT_IBIWON, master->regs + SVC_I3C_MSTATUS);
++	/* Disable COMPLETE interrupt */
++	writel(SVC_I3C_MINT_COMPLETE, master->regs + SVC_I3C_MINTCLR);
++	master->dma_started = false;
++}
+ 
++static void svc_i3c_master_write_dma_table(const u8 *src, u32 *dst, int len)
++{
++	int i;
+ 
+-	while (retry--) {
+-		writel(SVC_I3C_MCTRL_REQUEST_START_ADDR |
+-		       xfer_type |
+-		       SVC_I3C_MCTRL_IBIRESP_NACK |
+-		       SVC_I3C_MCTRL_DIR(rnw) |
+-		       SVC_I3C_MCTRL_ADDR(addr) |
+-		       SVC_I3C_MCTRL_RDTERM(*actual_len),
+-		       master->regs + SVC_I3C_MCTRL);
++	if (len > MAX_DMA_COUNT)
++		return;
+ 
+-		ret = readl_poll_timeout(master->regs + SVC_I3C_MSTATUS, reg,
+-				 SVC_I3C_MSTATUS_MCTRLDONE(reg), 0, 1000);
+-		if (ret)
+-			goto emit_stop;
++	for (i = 0; i < len; i++)
++		dst[i] = (u32)src[i] & 0xFF;
+ 
+-		if (readl(master->regs + SVC_I3C_MERRWARN) & SVC_I3C_MERRWARN_NACK) {
+-			/*
+-			 * According to I3C Spec 1.1.1, 11-Jun-2021, section: 5.1.2.2.3.
+-			 * If the Controller chooses to start an I3C Message with an I3C Dynamic
+-			 * Address, then special provisions shall be made because that same I3C
+-			 * Target may be initiating an IBI or a Controller Role Request. So, one of
+-			 * three things may happen: (skip 1, 2)
+-			 *
+-			 * 3. The Addresses match and the RnW bits also match, and so neither
+-			 * Controller nor Target will ACK since both are expecting the other side to
+-			 * provide ACK. As a result, each side might think it had "won" arbitration,
+-			 * but neither side would continue, as each would subsequently see that the
+-			 * other did not provide ACK.
+-			 * ...
+-			 * For either value of RnW: Due to the NACK, the Controller shall defer the
+-			 * Private Write or Private Read, and should typically transmit the Target
+-			 * Address again after a Repeated START (i.e., the next one or any one prior
+-			 * to a STOP in the Frame). Since the Address Header following a Repeated
+-			 * START is not arbitrated, the Controller will always win (see Section
+-			 * 5.1.2.2.4).
+-			 */
+-			if (retry && addr != 0x7e) {
+-				writel(SVC_I3C_MERRWARN_NACK, master->regs + SVC_I3C_MERRWARN);
+-			} else {
+-				ret = -ENXIO;
+-				*actual_len = 0;
+-				goto emit_stop;
+-			}
+-		} else {
+-			break;
+-		}
++	/* Set end bit for last byte */
++	dst[len - 1] |= 0x100;
++}
++
++static int svc_i3c_master_start_dma(struct svc_i3c_master *master)
++{
++	struct npcm_dma_xfer_desc *xfer = &master->dma_xfer;
++	int ch = xfer->rnw ? DMA_CH_RX : DMA_CH_TX;
++	u32 val;
++
++	if (!xfer->len)
++		return 0;
++
++	dev_dbg(master->dev, "start dma for %s, count %d\n",
++		xfer->rnw ? "R" : "W", xfer->len);
++
++	/* Set DMA transfer count */
++	xfer->actual_len = 0;
++	writel(xfer->len, master->dma_regs + NPCM_GDMA_TCNT(ch));
++
++	/* Write data to DMA TX table */
++	if (!xfer->rnw)
++		svc_i3c_master_write_dma_table(xfer->out,
++					       (u32 *)master->dma_tx_buf,
++					       xfer->len);
++
++	/*
++	 * Setup I3C DMA control
++	 * 1 byte DMA width
++	 * Enable DMA util dsiabled
++	 */
++	val = SVC_I3C_MDMACTRL_DMAWIDTH(1);
++	val |= xfer->rnw ? SVC_I3C_MDMACTRL_DMAFB(2) : SVC_I3C_MDMACTRL_DMATB(2);
++	writel(val, master->regs + SVC_I3C_MDMACTRL);
++
++	/*
++	 * Enable DMA
++	 * Source Address Fixed for RX
++	 * Destination Address Fixed for TX
++	 * Use 32-bit transfer width for TX (queal to MWDATAB register width)
++	 */
++	val = NPCM_GDMA_CTL_GDMAEN;
++	if (xfer->rnw)
++		val |= NPCM_GDMA_CTL_SAFIX | NPCM_GDMA_CTL_GDMAMS(2);
++	else
++		val |= NPCM_GDMA_CTL_DAFIX | NPCM_GDMA_CTL_GDMAMS(1) | NPCM_GDMA_CTL_TWS(2);
++	writel(val, master->dma_regs + NPCM_GDMA_CTL(ch));
++	master->dma_started = true;
++
++	return 0;
++}
++
++static int svc_i3c_master_xfer(struct svc_i3c_master *master,
++			       bool rnw, unsigned int xfer_type, u8 addr,
++			       u8 *in, const u8 *out, unsigned int xfer_len,
++			       unsigned int *actual_len, bool continued,
++			       bool use_dma)
++{
++	bool no_data = xfer_len ? false : true;
++	u32 reg, rdterm = *actual_len, mstatus;
++	int ret, i, count, space;
++	unsigned long flags;
++	ktime_t timeout;
++	u32 ibiresp;
++
++	if (rdterm > SVC_I3C_MAX_RDTERM)
++		rdterm = SVC_I3C_MAX_RDTERM;
++
++	/* Use SDR mode if transfer size is odd */
++	if (xfer_type == SVC_I3C_MCTRL_TYPE_I3C_DDR && (xfer_len % 2))
++		xfer_type = SVC_I3C_MCTRL_TYPE_I3C;
++
++	if (xfer_type == SVC_I3C_MCTRL_TYPE_I3C_DDR) {
++		/* Write the HDR-DDR cmd to the MWDATAB register to send out to slave */
++		writel(HDR_COMMAND, master->regs + SVC_I3C_MWDATAB);
++		/* Read count: add 1 for HDR-DDR command word and 1 for CRC word */
++		if (rnw)
++			rdterm = 2 + rdterm / 2;
++		master->hdr_mode = true;
+ 	}
+ 
+ 	/*
+-	 * According to I3C spec ver 1.1.1, 5.1.2.2.3 Consequence of Controller Starting a Frame
+-	 * with I3C Target Address.
+-	 *
+-	 * The I3C Controller normally should start a Frame, the Address may be arbitrated, and so
+-	 * the Controller shall monitor to see whether an In-Band Interrupt request, a Controller
+-	 * Role Request (i.e., Secondary Controller requests to become the Active Controller), or
+-	 * a Hot-Join Request has been made.
+-	 *
+-	 * If missed IBIWON check, the wrong data will be return. When IBIWON happen, return failure
+-	 * and yield the above events handler.
++	 * Acquire the spinlock to:
++	 * 1. Prevent concurrent execution of MCTRL request and IBI isr.
++	 * 2. Prevent schedule(local irq is disabled) to avoid TX FIFO
++	 *    empty during the transmission.
++	 */
++	spin_lock_irqsave(&master->req_lock, flags);
++
++	/*
++	 * IBI payload size may be larger than rdterm, use manual IBI response
++	 * for read operation to set the proper RDTERM value in IBI ack request.
++	 */
++	if (master->probe_done)
++		ibiresp = rnw ? SVC_I3C_MCTRL_IBIRESP_MANUAL : SVC_I3C_MCTRL_IBIRESP_AUTO;
++	else
++		ibiresp = SVC_I3C_MCTRL_IBIRESP_MANUAL;
++	timeout = ktime_add_ms(ktime_get(), 1000);
++retry_start:
++	writel(SVC_I3C_MCTRL_REQUEST_START_ADDR |
++	       xfer_type |
++	       ibiresp |
++	       SVC_I3C_MCTRL_DIR(rnw) |
++	       SVC_I3C_MCTRL_ADDR(addr) |
++	       SVC_I3C_MCTRL_RDTERM(rdterm),
++	       master->regs + SVC_I3C_MCTRL);
++
++	/*
++	 * HW issue:
++	 * I3C HW stalls the write transfer if the transmit FIFO becomes empty,
++	 * when new data is written to FIFO, I3C HW resumes the transfer but
++	 * the first transmitted data bit may have the wrong value.
++	 * Workaround:
++	 * Fill the FIFO in advance to prevent FIFO from becoming empty.
+ 	 */
+-	if (SVC_I3C_MSTATUS_IBIWON(reg)) {
+-		ret = -EAGAIN;
+-		*actual_len = 0;
++	if (!rnw && xfer_len) {
++		reg = readl(master->regs + SVC_I3C_MDATACTRL);
++		space = SVC_I3C_FIFO_SIZE - SVC_I3C_MDATACTRL_TXCOUNT(reg);
++		count = xfer_len > space ? space : xfer_len;
++		for (i = 0; i < count; i++) {
++			if (i == xfer_len - 1)
++				writel(out[0], master->regs + SVC_I3C_MWDATABE);
++			else
++				writel(out[0], master->regs + SVC_I3C_MWDATAB);
++			out++;
++		}
++		xfer_len -= count;
++		if (!xfer_len)
++			use_dma = false;
++	}
++	if (use_dma) {
++		master->dma_xfer.out = out;
++		master->dma_xfer.in = in;
++		master->dma_xfer.len = xfer_len;
++		master->dma_xfer.rnw = rnw;
++		master->dma_xfer.end = !continued;
++		svc_i3c_master_start_dma(master);
++	}
++
++	ret = readl_poll_timeout(master->regs + SVC_I3C_MSTATUS, reg,
++				 SVC_I3C_MSTATUS_MCTRLDONE(reg), 0, 1000);
++	if (ret)
+ 		goto emit_stop;
++
++	mstatus = readl(master->regs + SVC_I3C_MSTATUS);
++	if (SVC_I3C_MSTATUS_IBIWON(mstatus)) {
++		/*
++		 * Unable to handle slave event before driver probe done.
++		 * Ignore the event and disable slave interrupts
++		 * (send a Repeated START and DISEC CCC).
++		 */
++		if (!master->probe_done) {
++			if (use_dma)
++				svc_i3c_master_stop_dma(master);
++			/* ACK the IBI and drop the payload */
++			svc_i3c_master_ack_ibi(master, true);
++			readl_poll_timeout(master->regs + SVC_I3C_MSTATUS, reg,
++					   SVC_I3C_MSTATUS_COMPLETE(reg), 0, 1000);
++			svc_i3c_master_flush_fifo(master);
++			/* Send a Repeated Start followed by a DISEC CCC */
++			writel(SVC_I3C_MCTRL_REQUEST_START_ADDR |
++			       xfer_type | SVC_I3C_MCTRL_IBIRESP_NACK |
++			       SVC_I3C_MCTRL_DIR(0) |
++			       SVC_I3C_MCTRL_ADDR(I3C_BROADCAST_ADDR),
++			       master->regs + SVC_I3C_MCTRL);
++			writel(I3C_CCC_DISEC(true), master->regs + SVC_I3C_MWDATAB);
++			writel(I3C_CCC_EVENT_SIR | I3C_CCC_EVENT_MR | I3C_CCC_EVENT_HJ,
++			       master->regs + SVC_I3C_MWDATABE);
++			readl_poll_timeout(master->regs + SVC_I3C_MSTATUS, reg,
++					 SVC_I3C_MSTATUS_COMPLETE(reg), 0, 1000);
++			svc_i3c_master_emit_stop(master);
++			writel(SVC_I3C_MINT_IBIWON, master->regs + SVC_I3C_MSTATUS);
++			spin_unlock_irqrestore(&master->req_lock, flags);
++			/* Return EAGAIN to restart the transaction */
++			return -EAGAIN;
++		}
++		/* Stop RX DMA to prevent it from receving the ibi payload */
++		if (use_dma && rnw)
++			svc_i3c_master_stop_dma(master);
++		ret = svc_i3c_master_handle_ibiwon(master, !rnw);
++		if (ret) {
++			dev_err(master->dev, "xfer(rnw %d): handle ibi event fail, ret=%d\n",
++				rnw, ret);
++			goto emit_stop;
++		}
++		if (ktime_after(ktime_get(), timeout)) {
++			dev_info(master->dev, "abnormal ibiwon events\n");
++			goto emit_stop;
++		}
++
++		if (use_dma && rnw)
++			svc_i3c_master_start_dma(master);
++
++		/* Clear COMPLETE status of this IBI transaction */
++		writel(SVC_I3C_MINT_COMPLETE, master->regs + SVC_I3C_MSTATUS);
++		master->ibiwon_cnt++;
++		goto retry_start;
++	}
++	if (SVC_I3C_MSTATUS_NACKED(mstatus)) {
++		dev_dbg(master->dev, "addr 0x%x NACK\n", addr);
++		ret = -EIO;
++		goto emit_stop;
++	}
++
++	if (use_dma) {
++		init_completion(&master->xfer_comp);
++		/* Use COMPLETE interrupt as notification of transfer completion */
++		svc_i3c_master_enable_interrupts(master, SVC_I3C_MINT_COMPLETE);
++		spin_unlock_irqrestore(&master->req_lock, flags);
++		ret = wait_for_completion_timeout(&master->xfer_comp, msecs_to_jiffies(100));
++		if (ret < 0) {
++			svc_i3c_master_stop_dma(master);
++			svc_i3c_master_flush_fifo(master);
++			svc_i3c_master_emit_stop(master);
++			svc_i3c_master_clear_merrwarn(master);
++			dev_err(master->dev, "DMA transfer timeout (%s)\n",
++				rnw ? "Read" : "write");
++			dev_err(master->dev, "mstatus = 0x%02x\n",
++				readl(master->regs + SVC_I3C_MSTATUS));
++			svc_i3c_master_err_stats(master, ETIMEDOUT);
++			return ret;
++		}
++
++		if (rnw)
++			*actual_len = master->dma_xfer.actual_len;
++		return 0;
+ 	}
+ 
+ 	if (rnw)
+@@ -1120,26 +1718,50 @@ static int svc_i3c_master_xfer(struct svc_i3c_master *master,
+ 	if (rnw)
+ 		*actual_len = ret;
+ 
+-	ret = readl_poll_timeout(master->regs + SVC_I3C_MSTATUS, reg,
+-				 SVC_I3C_MSTATUS_COMPLETE(reg), 0, 1000);
+-	if (ret)
+-		goto emit_stop;
++	if (!no_data) {
++		ret = readl_poll_timeout(master->regs + SVC_I3C_MSTATUS, reg,
++					 SVC_I3C_MSTATUS_COMPLETE(reg), 0, 1000);
++		if (ret)
++			goto emit_stop;
+ 
+-	writel(SVC_I3C_MINT_COMPLETE, master->regs + SVC_I3C_MSTATUS);
++		/* If use_dma, COMPLETE bit is cleared in the isr */
++		writel(SVC_I3C_MINT_COMPLETE, master->regs + SVC_I3C_MSTATUS);
++	}
+ 
+-	if (!continued) {
+-		svc_i3c_master_emit_stop(master);
+ 
+-		/* Wait idle if stop is sent. */
+-		readl_poll_timeout(master->regs + SVC_I3C_MSTATUS, reg,
+-				   SVC_I3C_MSTATUS_STATE_IDLE(reg), 0, 1000);
++	if (master->hdr_mode) {
++		reg = readl(master->regs + SVC_I3C_MERRWARN);
++		if (SVC_I3C_MERRWARN_HCRC(reg)) {
++			dev_err(master->dev, "HDR CRC error\n");
++			ret = -EIO;
++			goto emit_stop;
++		}
+ 	}
+ 
++	if (!continued)
++		svc_i3c_master_emit_stop(master);
++
++	spin_unlock_irqrestore(&master->req_lock, flags);
++
+ 	return 0;
+ 
+ emit_stop:
++	if (master->dma_started)
++		svc_i3c_master_stop_dma(master);
++	/*
++	 * If the read transfer is not completed, update RDTERM value to
++	 * terminate the transfer and let emitting STOP work normally.
++	 */
++	if (rnw && ret == -ETIMEDOUT) {
++		writel(SVC_I3C_MCTRL_RDTERM(1), master->regs + SVC_I3C_MCTRL);
++		svc_i3c_master_flush_fifo(master);
++		readl_poll_timeout(master->regs + SVC_I3C_MSTATUS, reg,
++				   SVC_I3C_MSTATUS_COMPLETE(reg), 0, 1000);
++	}
++	svc_i3c_master_flush_fifo(master);
+ 	svc_i3c_master_emit_stop(master);
+ 	svc_i3c_master_clear_merrwarn(master);
++	spin_unlock_irqrestore(&master->req_lock, flags);
+ 
+ 	return ret;
+ }
+@@ -1177,35 +1799,37 @@ static void svc_i3c_master_dequeue_xfer_locked(struct svc_i3c_master *master,
+ static void svc_i3c_master_dequeue_xfer(struct svc_i3c_master *master,
+ 					struct svc_i3c_xfer *xfer)
+ {
+-	unsigned long flags;
+-
+-	spin_lock_irqsave(&master->xferqueue.lock, flags);
+ 	svc_i3c_master_dequeue_xfer_locked(master, xfer);
+-	spin_unlock_irqrestore(&master->xferqueue.lock, flags);
+ }
+ 
+ static void svc_i3c_master_start_xfer_locked(struct svc_i3c_master *master)
+ {
+ 	struct svc_i3c_xfer *xfer = master->xferqueue.cur;
++	unsigned long flags;
++	int retry = 2;
+ 	int ret, i;
+ 
+ 	if (!xfer)
+ 		return;
+ 
++	/* Prevent fifo flush while IBI isr is running */
++	spin_lock_irqsave(&master->req_lock, flags);
+ 	svc_i3c_master_clear_merrwarn(master);
+ 	svc_i3c_master_flush_fifo(master);
++	spin_unlock_irqrestore(&master->req_lock, flags);
+ 
+ 	for (i = 0; i < xfer->ncmds; i++) {
+ 		struct svc_i3c_cmd *cmd = &xfer->cmds[i];
+-
++again:
+ 		ret = svc_i3c_master_xfer(master, cmd->rnw, xfer->type,
+ 					  cmd->addr, cmd->in, cmd->out,
+ 					  cmd->len, &cmd->actual_len,
+-					  cmd->continued);
++					  cmd->continued, cmd->use_dma);
++		if (ret == -EAGAIN && --retry)
++			goto again;
+ 		/* cmd->xfer is NULL if I2C or CCC transfer */
+ 		if (cmd->xfer)
+ 			cmd->xfer->actual_len = cmd->actual_len;
+-
+ 		if (ret)
+ 			break;
+ 	}
+@@ -1229,7 +1853,6 @@ static void svc_i3c_master_start_xfer_locked(struct svc_i3c_master *master)
+ static void svc_i3c_master_enqueue_xfer(struct svc_i3c_master *master,
+ 					struct svc_i3c_xfer *xfer)
+ {
+-	unsigned long flags;
+ 	int ret;
+ 
+ 	ret = pm_runtime_resume_and_get(master->dev);
+@@ -1239,14 +1862,13 @@ static void svc_i3c_master_enqueue_xfer(struct svc_i3c_master *master,
+ 	}
+ 
+ 	init_completion(&xfer->comp);
+-	spin_lock_irqsave(&master->xferqueue.lock, flags);
++
+ 	if (master->xferqueue.cur) {
+ 		list_add_tail(&xfer->node, &master->xferqueue.list);
+ 	} else {
+ 		master->xferqueue.cur = xfer;
+ 		svc_i3c_master_start_xfer_locked(master);
+ 	}
+-	spin_unlock_irqrestore(&master->xferqueue.lock, flags);
+ 
+ 	pm_runtime_mark_last_busy(master->dev);
+ 	pm_runtime_put_autosuspend(master->dev);
+@@ -1368,8 +1990,11 @@ static int svc_i3c_master_send_ccc_cmd(struct i3c_master_controller *m,
+ 	else
+ 		ret = svc_i3c_master_send_direct_ccc_cmd(master, cmd);
+ 
+-	if (ret)
++	if (ret) {
++		dev_dbg(master->dev, "send ccc 0x%02x %s, ret = %d\n",
++				cmd->id, broadcast ? "(broadcast)" : "", ret);
+ 		cmd->err = I3C_ERROR_M2;
++	}
+ 
+ 	return ret;
+ }
+@@ -1382,16 +2007,39 @@ static int svc_i3c_master_priv_xfers(struct i3c_dev_desc *dev,
+ 	struct svc_i3c_master *master = to_svc_i3c_master(m);
+ 	struct svc_i3c_i2c_dev_data *data = i3c_dev_get_master_data(dev);
+ 	struct svc_i3c_xfer *xfer;
++	struct svc_i3c_cmd *cmd;
+ 	int ret, i;
+ 
+-	xfer = svc_i3c_master_alloc_xfer(master, nxfers);
++	xfer = svc_i3c_master_alloc_xfer(master, nxfers + 1);
+ 	if (!xfer)
+ 		return -ENOMEM;
+ 
+-	xfer->type = SVC_I3C_MCTRL_TYPE_I3C;
++	if (master->hdr_ddr && dev->info.hdr_cap & BIT(I3C_HDR_DDR))
++		xfer->type = SVC_I3C_MCTRL_TYPE_I3C_DDR;
++	else
++		xfer->type = SVC_I3C_MCTRL_TYPE_I3C;
++
++	/*
++	 * I3C Spec 1.1, Section 5.1.6.4
++	 * In order to ensure that any other I3C Device can initiate a Target
++	 * Interrupt Request or a Controller Role Request, the I3C Active
++	 * Controller may choose to initiate new Frames with a START followed
++	 * by the I3C Broadcast Address (7’h7E).
++	 *
++	 * Start the private transfer with broadcast address
++	 */
++	cmd = &xfer->cmds[0];
++	cmd->addr = I3C_BROADCAST_ADDR;
++	cmd->rnw = 0;
++	cmd->in = NULL;
++	cmd->out = NULL;
++	cmd->len = 0;
++	cmd->actual_len = SVC_I3C_MAX_IBI_PAYLOAD_SIZE;
++	cmd->use_dma = false;
++	cmd->continued = true;
+ 
+ 	for (i = 0; i < nxfers; i++) {
+-		struct svc_i3c_cmd *cmd = &xfer->cmds[i];
++		struct svc_i3c_cmd *cmd = &xfer->cmds[i + 1];
+ 
+ 		cmd->xfer = &xfers[i];
+ 		cmd->addr = master->addrs[data->index];
+@@ -1401,6 +2049,9 @@ static int svc_i3c_master_priv_xfers(struct i3c_dev_desc *dev,
+ 		cmd->len = xfers[i].len;
+ 		cmd->actual_len = xfers[i].rnw ? xfers[i].len : 0;
+ 		cmd->continued = (i + 1) < nxfers;
++		if (master->use_dma && (xfers[i].len > SVC_I3C_FIFO_SIZE)
++		    && (xfers[i].len <= MAX_DMA_COUNT))
++			cmd->use_dma = true;
+ 	}
+ 
+ 	mutex_lock(&master->lock);
+@@ -1409,6 +2060,12 @@ static int svc_i3c_master_priv_xfers(struct i3c_dev_desc *dev,
+ 		svc_i3c_master_dequeue_xfer(master, xfer);
+ 	mutex_unlock(&master->lock);
+ 
++	for (i = 0; i < nxfers; i++) {
++		struct svc_i3c_cmd *cmd = &xfer->cmds[i + 1];
++
++		if (xfers[i].rnw)
++			xfers[i].len = cmd->actual_len;
++	}
+ 	ret = xfer->ret;
+ 	svc_i3c_master_free_xfer(xfer);
+ 
+@@ -1464,9 +2121,9 @@ static int svc_i3c_master_request_ibi(struct i3c_dev_desc *dev,
+ 	unsigned long flags;
+ 	unsigned int i;
+ 
+-	if (dev->ibi->max_payload_len > SVC_I3C_FIFO_SIZE) {
++	if (dev->ibi->max_payload_len > SVC_I3C_MAX_IBI_PAYLOAD_SIZE) {
+ 		dev_err(master->dev, "IBI max payload %d should be < %d\n",
+-			dev->ibi->max_payload_len, SVC_I3C_FIFO_SIZE);
++			dev->ibi->max_payload_len, SVC_I3C_MAX_IBI_PAYLOAD_SIZE + 1);
+ 		return -ERANGE;
+ 	}
+ 
+@@ -1520,6 +2177,8 @@ static int svc_i3c_master_enable_ibi(struct i3c_dev_desc *dev)
+ 		return ret;
+ 	}
+ 
++	/* Clear the interrupt status */
++	writel(SVC_I3C_MINT_SLVSTART, master->regs + SVC_I3C_MSTATUS);
+ 	svc_i3c_master_enable_interrupts(master, SVC_I3C_MINT_SLVSTART);
+ 
+ 	return i3c_master_enec_locked(m, dev->info.dyn_addr, I3C_CCC_EVENT_SIR);
+@@ -1531,7 +2190,7 @@ static int svc_i3c_master_disable_ibi(struct i3c_dev_desc *dev)
+ 	struct svc_i3c_master *master = to_svc_i3c_master(m);
+ 	int ret;
+ 
+-	svc_i3c_master_disable_interrupts(master);
++	writel(SVC_I3C_MINT_SLVSTART, master->regs + SVC_I3C_MINTCLR);
+ 
+ 	ret = i3c_master_disec_locked(m, dev->info.dyn_addr, I3C_CCC_EVENT_SIR);
+ 
+@@ -1583,13 +2242,6 @@ static int svc_i3c_master_prepare_clks(struct svc_i3c_master *master)
+ 		return ret;
+ 	}
+ 
+-	ret = clk_prepare_enable(master->sclk);
+-	if (ret) {
+-		clk_disable_unprepare(master->pclk);
+-		clk_disable_unprepare(master->fclk);
+-		return ret;
+-	}
+-
+ 	return 0;
+ }
+ 
+@@ -1597,13 +2249,412 @@ static void svc_i3c_master_unprepare_clks(struct svc_i3c_master *master)
+ {
+ 	clk_disable_unprepare(master->pclk);
+ 	clk_disable_unprepare(master->fclk);
+-	clk_disable_unprepare(master->sclk);
++}
++
++static void svc_i3c_slave_enable_interrupts(struct svc_i3c_master *master,
++					    bool enable)
++{
++	/* Use STOP condition to check the end of transaction */
++	if (enable)
++		writel(SVC_I3C_INT_STOP, master->regs + SVC_I3C_INTSET);
++	else
++		writel(SVC_I3C_INT_STOP, master->regs + SVC_I3C_INTCLR);
++}
++
++static void svc_i3c_slave_stop_dma(struct svc_i3c_master *master)
++{
++	writel(0, master->dma_regs + NPCM_GDMA_CTL(DMA_CH_TX));
++	writel(0, master->dma_regs + NPCM_GDMA_CTL(DMA_CH_RX));
++	writel(0, master->regs + SVC_I3C_MDMACTRL);
++}
++
++static int svc_i3c_slave_start_dma(struct svc_i3c_master *master,
++				   struct svc_i3c_xfer *xfer)
++{
++	struct svc_i3c_cmd *cmd = &xfer->cmds[0];
++	int ch = cmd->rnw ? DMA_CH_RX : DMA_CH_TX;
++	u32 val;
++
++	if (!cmd->len)
++		return 0;
++
++	dev_dbg(master->dev, "slave start dma for %s, count %d\n",
++		cmd->rnw ? "R" : "W", cmd->len);
++
++	/* Set DMA transfer count */
++	writel(cmd->len, master->dma_regs + NPCM_GDMA_TCNT(ch));
++
++	/* Write data to DMA TX table */
++	if (ch == DMA_CH_TX)
++		svc_i3c_master_write_dma_table(cmd->out,
++					       (u32 *)master->dma_tx_buf,
++					       cmd->len);
++
++	/*
++	 * Setup I3C DMA control
++	 * 1 byte DMA width
++	 * Enable DMA util dsiabled
++	 */
++	val = SVC_I3C_DMACTRL_DMAWIDTH(1);
++	val |= (ch == DMA_CH_RX) ? SVC_I3C_DMACTRL_DMAFB(2) : SVC_I3C_DMACTRL_DMATB(2);
++	writel(val, master->regs + SVC_I3C_DMACTRL);
++
++	/* Clear STOP status because this will be used as check point of transaction end */
++	writel(SVC_I3C_STATUS_STOP, master->regs + SVC_I3C_STATUS);
++
++	/*
++	 * Enable DMA
++	 * Source Address Fixed for RX
++	 * Destination Address Fixed for TX
++	 * Use 32-bit transfer width for TX (queal to MWDATAB register width)
++	 */
++	val = NPCM_GDMA_CTL_GDMAEN;
++	if (ch == DMA_CH_RX)
++		val |= NPCM_GDMA_CTL_SAFIX | NPCM_GDMA_CTL_GDMAMS(2);
++	else
++		val |= NPCM_GDMA_CTL_DAFIX | NPCM_GDMA_CTL_GDMAMS(1) | NPCM_GDMA_CTL_TWS(2);
++	writel(val, master->dma_regs + NPCM_GDMA_CTL(ch));
++
++	return 0;
++}
++
++static void svc_i3c_slave_check_complete(struct svc_i3c_master *master)
++{
++	struct svc_i3c_xfer *xfer = master->slave.cur;
++	struct svc_i3c_cmd *cmd = &xfer->cmds[0];
++	int ch = cmd->rnw ? DMA_CH_RX : DMA_CH_TX;
++	u32 count, reg;
++	bool hdr_mode = false;
++
++	/* Get the DMA transfer count */
++	count = readl(master->dma_regs + NPCM_GDMA_CTCNT(ch));
++
++	/* No rx data transferred */
++	if (cmd->rnw && cmd->len == count)
++		return;
++
++	/* No tx data transferred */
++	if (!cmd->rnw) {
++		reg = readl(master->regs + SVC_I3C_DATACTRL);
++		if (cmd->len == count + SVC_I3C_DATACTRL_TXCOUNT(reg))
++			return;
++	}
++	svc_i3c_slave_stop_dma(master);
++
++	if (cmd->len < count)
++		goto quit;
++	count = cmd->len - count;
++
++	reg = readl(master->regs + SVC_I3C_STATUS);
++	if (reg & SVC_I3C_STATUS_DDRMATCH) {
++		writel(SVC_I3C_STATUS_DDRMATCH, master->regs);
++		hdr_mode = true;
++	}
++	if (cmd->rnw) {
++		struct i3c_dev_desc *desc = master->base.this;
++
++		if (hdr_mode) {
++			/* Drop the hdr command */
++			dev_dbg(master->dev, "drop hdr cmd: 0x%x\n", master->dma_rx_buf[0]);
++			count--;
++			memcpy(cmd->in, master->dma_rx_buf + 1, count);
++		} else {
++			memcpy(cmd->in, master->dma_rx_buf, count);
++		}
++		dev_dbg(master->dev, "slave rx count %u\n", count);
++		if (desc->target_info.read_handler)
++			desc->target_info.read_handler(desc->dev, cmd->in, count);
++	} else {
++		cmd->len = count - SVC_I3C_DATACTRL_TXCOUNT(reg);
++		if (hdr_mode) {
++			reg = readl(master->regs + SVC_I3C_RDATAB);
++			dev_dbg(master->dev, "recv: hdr cmd=0x%x\n", reg);
++		}
++
++		/* Clear Pending Intr */
++		writel(0, master->regs + SVC_I3C_CTRL);
++		dev_dbg(master->dev, "slave tx count %u\n", cmd->len);
++		complete(&xfer->comp);
++	}
++quit:
++	if (master->slave.pending_rd) {
++		master->slave.cur = master->slave.pending_rd;
++		svc_i3c_slave_start_dma(master, master->slave.cur);
++	} else {
++		master->slave.cur = NULL;
++		svc_i3c_slave_enable_interrupts(master, false);
++	}
++}
++
++static irqreturn_t svc_i3c_slave_irq_handler(int irq, void *dev_id)
++{
++	struct svc_i3c_master *master = (struct svc_i3c_master *)dev_id;
++	u32 active = readl(master->regs + SVC_I3C_INTMASKED);
++	u32 status = readl(master->regs + SVC_I3C_STATUS);
++
++	if ((active & SVC_I3C_INT_STOP) && (status & SVC_I3C_INT_STOP)) {
++		writel(SVC_I3C_STATUS_STOP, master->regs + SVC_I3C_STATUS);
++		if (master->slave.cur)
++			svc_i3c_slave_check_complete(master);
++	}
++
++	return IRQ_HANDLED;
++}
++
++static int svc_i3c_slave_write(struct i3c_master_controller *m,
++			       struct svc_i3c_xfer *xfer)
++{
++	struct svc_i3c_master *master = to_svc_i3c_master(m);
++	int ret;
++	unsigned long flags;
++
++	spin_lock_irqsave(&master->slave.lock, flags);
++	if (master->slave.cur)
++		svc_i3c_slave_stop_dma(master);
++	writel(SVC_I3C_DATACTRL_FLUSHTB, master->regs + SVC_I3C_DATACTRL);
++	master->slave.cur = xfer;
++
++	init_completion(&xfer->comp);
++	svc_i3c_slave_start_dma(master, xfer);
++	svc_i3c_slave_enable_interrupts(master, true);
++
++	/*
++	 * Set Pending Intr in GetStatus response to inform that
++	 * slave has data to send.
++	 */
++	writel(SVC_I3C_CTRL_PENDINT(1), master->regs + SVC_I3C_CTRL);
++	spin_unlock_irqrestore(&master->slave.lock, flags);
++
++	ret = wait_for_completion_timeout(&xfer->comp,
++					  msecs_to_jiffies(3000));
++	if (!ret) {
++		/* Clear Pending Intr */
++		writel(0, master->regs + SVC_I3C_CTRL);
++
++		spin_lock_irqsave(&master->slave.lock, flags);
++		svc_i3c_slave_stop_dma(master);
++		if (master->slave.pending_rd) {
++			master->slave.cur = master->slave.pending_rd;
++			svc_i3c_slave_start_dma(master, master->slave.cur);
++		} else {
++			master->slave.cur = NULL;
++			svc_i3c_slave_enable_interrupts(master, false);
++		}
++		spin_unlock_irqrestore(&master->slave.lock, flags);
++		dev_info(master->dev, "slave write timeout\n");
++		xfer->ret = -ETIMEDOUT;
++		return -ETIMEDOUT;
++	}
++
++	xfer->ret = 0;
++	return 0;
++}
++
++static int svc_i3c_slave_priv_xfers(struct i3c_dev_desc *dev,
++				    struct i3c_priv_xfer *xfers,
++				    int nxfers)
++{
++	struct i3c_master_controller *m = i3c_dev_get_master(dev);
++	struct svc_i3c_master *master = to_svc_i3c_master(m);
++	struct svc_i3c_xfer *xfer;
++	struct svc_i3c_cmd *cmd;
++	int ret;
++
++	/* Only support one write transfer */
++	if (nxfers != 1 || xfers[0].rnw)
++		return -EOPNOTSUPP;
++
++	if (master->slave.cur && master->slave.cur != master->slave.pending_rd)
++		return -EBUSY;
++
++	xfer = svc_i3c_master_alloc_xfer(master, nxfers);
++	if (!xfer)
++		return -ENOMEM;
++
++	cmd = &xfer->cmds[0];
++	cmd->rnw = false;
++	cmd->out = xfers[0].data.out;
++	cmd->len = xfers[0].len;
++	svc_i3c_slave_write(m, xfer);
++
++	ret = xfer->ret;
++	svc_i3c_master_free_xfer(xfer);
++
++	return ret;
++}
++
++static int svc_i3c_slave_bus_init(struct i3c_master_controller *m)
++{
++	struct svc_i3c_master *master = to_svc_i3c_master(m);
++	struct i3c_dev_desc *desc = m->this;
++	u32 partno = (u32)desc->info.pid;
++	struct svc_i3c_xfer *xfer;
++	struct svc_i3c_cmd *cmd;
++	u32 reg;
++
++	if (!master->use_dma)
++		return -ENOTSUPP;
++
++	/* Set dcr/partno */
++	writel(SVC_I3C_IDEXT_DCR(desc->info.dcr), master->regs + SVC_I3C_IDEXT);
++	writel(partno, master->regs + SVC_I3C_PARTNO);
++
++	/* Set max rd/wr length */
++	reg = SVC_I3C_MAXLIMITS_MAXRD(MAX_DMA_COUNT) |
++		SVC_I3C_MAXLIMITS_MAXWR(MAX_DMA_COUNT);
++	writel(reg, master->regs + SVC_I3C_MAXLIMITS);
++
++	/* Enable slave mode */
++	reg = readl(master->regs + SVC_I3C_CONFIG);
++	reg |= SVC_I3C_CONFIG_SLVEN;
++	if (master->hdr_ddr)
++		reg |= SVC_I3C_CONFIG_DDROK;
++	writel(reg, master->regs + SVC_I3C_CONFIG);
++
++	/* Prepare one RX transfer */
++	xfer = svc_i3c_master_alloc_xfer(master, 1);
++	if (!xfer)
++		return -ENOMEM;
++
++	cmd = &xfer->cmds[0];
++	cmd->rnw = true;
++	cmd->len = MAX_DMA_COUNT;
++	cmd->in = kzalloc(MAX_DMA_COUNT, GFP_KERNEL);
++	if (!cmd->in) {
++		svc_i3c_master_free_xfer(xfer);
++		return -ENOMEM;
++	}
++	master->slave.pending_rd = xfer;
++	master->slave.cur = xfer;
++	svc_i3c_slave_start_dma(master, xfer);
++	svc_i3c_slave_enable_interrupts(master, true);
++
++	return 0;
++}
++
++static void svc_i3c_slave_bus_cleanup(struct i3c_master_controller *m)
++{
++	struct svc_i3c_master *master = to_svc_i3c_master(m);
++	u32 reg;
++
++	svc_i3c_slave_enable_interrupts(master, false);
++
++	reg = readl(master->regs + SVC_I3C_CONFIG);
++	reg &= ~SVC_I3C_CONFIG_SLVEN;
++	writel(reg, master->regs + SVC_I3C_CONFIG);
++}
++
++static const struct i3c_target_ops svc_i3c_slave_ops = {
++	.bus_init = svc_i3c_slave_bus_init,
++	.bus_cleanup = svc_i3c_slave_bus_cleanup,
++	.priv_xfers = svc_i3c_slave_priv_xfers,
++};
++
++static struct dentry *svc_i3c_debugfs_dir;
++static int debug_show(struct seq_file *seq, void *v)
++{
++	struct svc_i3c_master *master = seq->private;
++
++	seq_printf(seq, "MSTATUS=0x%x\n", readl(master->regs + SVC_I3C_MSTATUS));
++	seq_printf(seq, "MERRWARN=0x%x\n", readl(master->regs + SVC_I3C_MERRWARN));
++	seq_printf(seq, "MCTRL=0x%x\n", readl(master->regs + SVC_I3C_MCTRL));
++	seq_printf(seq, "MDATACTRL=0x%x\n", readl(master->regs + SVC_I3C_MDATACTRL));
++	seq_printf(seq, "MCONFIG=0x%x\n", readl(master->regs + SVC_I3C_MCONFIG));
++
++	return 0;
++}
++
++DEFINE_SHOW_ATTRIBUTE(debug);
++
++static void svc_i3c_init_debugfs(struct platform_device *pdev,
++				 struct svc_i3c_master *master)
++{
++	if (!svc_i3c_debugfs_dir) {
++		svc_i3c_debugfs_dir = debugfs_create_dir("svc_i3c", NULL);
++		if (!svc_i3c_debugfs_dir)
++			return;
++	}
++
++	master->debugfs = debugfs_create_dir(dev_name(&pdev->dev),
++					     svc_i3c_debugfs_dir);
++	if (!master->debugfs)
++		return;
++
++	debugfs_create_file("debug", 0444, master->debugfs, master, &debug_fops);
++	debugfs_create_u64("err_cnt", 0444, master->debugfs, &master->err_cnt);
++	debugfs_create_u8("err_code", 0444, master->debugfs, &master->err_code);
++	debugfs_create_u64("ibiwon_cnt", 0444, master->debugfs, &master->ibiwon_cnt);
++}
++
++static int svc_i3c_setup_dma(struct platform_device *pdev, struct svc_i3c_master *master)
++{
++	struct device *dev = &pdev->dev;
++	u32 dma_conn, reg_base;
++	int ret;
++
++	if (!of_property_read_bool(dev->of_node, "use-dma"))
++		return 0;
++
++	ret = of_property_read_u32(dev->of_node, "dma-mux", &dma_conn);
++	if (ret) {
++		dev_dbg(dev, "no DMA channel mux configured\n");
++		return 0;
++	}
++
++	master->dma_regs = devm_platform_ioremap_resource(pdev, 1);
++	if (IS_ERR(master->dma_regs))
++		return 0;
++
++	master->dma_mux_regs = devm_platform_ioremap_resource(pdev, 2);
++	if (IS_ERR(master->dma_mux_regs))
++		return 0;
++
++	/* DMA TX transfer width is 32 bits(MWDATAB width) for each byte sent to I3C bus */
++	master->dma_tx_buf = dma_alloc_coherent(dev, MAX_DMA_COUNT * 4,
++						&master->dma_tx_addr, GFP_KERNEL);
++	if (!master->dma_tx_buf)
++		return -ENOMEM;
++
++	master->dma_rx_buf = dma_alloc_coherent(dev, MAX_DMA_COUNT,
++						&master->dma_rx_addr, GFP_KERNEL);
++	if (!master->dma_rx_buf) {
++		dma_free_coherent(master->dev, MAX_DMA_COUNT * 4, master->dma_tx_buf,
++				  master->dma_tx_addr);
++		return -ENOMEM;
++	}
++
++	/*
++	 * Set DMA channel connectivity
++	 * channel 0: I3C TX, channel 1: I3C RX
++	 */
++	writel(0x00600060 | (dma_conn + 1) << 16 | dma_conn, master->dma_mux_regs);
++	master->use_dma = true;
++	dev_info(dev, "Using DMA (mux %d)\n", dma_conn);
++
++	of_property_read_u32_index(dev->of_node, "reg", 0, &reg_base);
++	/*
++	 * Setup GDMA Channel for TX (Memory to I3C FIFO)
++	 */
++	writel(master->dma_tx_addr, master->dma_regs + NPCM_GDMA_SRCB(DMA_CH_TX));
++	writel(reg_base + SVC_I3C_MWDATAB, master->dma_regs +
++	       NPCM_GDMA_DSTB(DMA_CH_TX));
++	/*
++	 * Setup GDMA Channel for RX (I3C FIFO to Memory)
++	 */
++	writel(reg_base + SVC_I3C_MRDATAB, master->dma_regs +
++	       NPCM_GDMA_SRCB(DMA_CH_RX));
++	writel(master->dma_rx_addr, master->dma_regs + NPCM_GDMA_DSTB(DMA_CH_RX));
++
++	return 0;
+ }
+ 
+ static int svc_i3c_master_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+ 	struct svc_i3c_master *master;
++	struct reset_control *reset;
++	const char *role;
++	u32 val;
+ 	int ret;
+ 
+ 	master = devm_kzalloc(dev, sizeof(*master), GFP_KERNEL);
+@@ -1622,10 +2673,6 @@ static int svc_i3c_master_probe(struct platform_device *pdev)
+ 	if (IS_ERR(master->fclk))
+ 		return PTR_ERR(master->fclk);
+ 
+-	master->sclk = devm_clk_get(dev, "slow_clk");
+-	if (IS_ERR(master->sclk))
+-		return PTR_ERR(master->sclk);
+-
+ 	master->irq = platform_get_irq(pdev, 0);
+ 	if (master->irq < 0)
+ 		return master->irq;
+@@ -1636,21 +2683,31 @@ static int svc_i3c_master_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
++	reset = devm_reset_control_get(&pdev->dev, NULL);
++	if (!IS_ERR(reset)) {
++		reset_control_assert(reset);
++		udelay(5);
++		reset_control_deassert(reset);
++	}
+ 	INIT_WORK(&master->hj_work, svc_i3c_master_hj_work);
+-	INIT_WORK(&master->ibi_work, svc_i3c_master_ibi_work);
+-	mutex_init(&master->lock);
+-
+-	ret = devm_request_irq(dev, master->irq, svc_i3c_master_irq_handler,
+-			       IRQF_NO_SUSPEND, "svc-i3c-irq", master);
++	ret = of_property_read_string(pdev->dev.of_node, "initial-role", &role);
++	if (!ret && !strcmp("target", role))
++		ret = devm_request_irq(dev, master->irq, svc_i3c_slave_irq_handler,
++				       IRQF_NO_SUSPEND, "svc-i3c-irq", master);
++	else
++		ret = devm_request_irq(dev, master->irq, svc_i3c_master_irq_handler,
++				       IRQF_NO_SUSPEND, "svc-i3c-irq", master);
+ 	if (ret)
+ 		goto err_disable_clks;
+ 
+ 	master->free_slots = GENMASK(SVC_I3C_MAX_DEVS - 1, 0);
+ 
+-	spin_lock_init(&master->xferqueue.lock);
++	mutex_init(&master->lock);
+ 	INIT_LIST_HEAD(&master->xferqueue.list);
+ 
++	spin_lock_init(&master->req_lock);
+ 	spin_lock_init(&master->ibi.lock);
++	spin_lock_init(&master->slave.lock);
+ 	master->ibi.num_slots = SVC_I3C_MAX_DEVS;
+ 	master->ibi.slots = devm_kcalloc(&pdev->dev, master->ibi.num_slots,
+ 					 sizeof(*master->ibi.slots),
+@@ -1670,15 +2727,44 @@ static int svc_i3c_master_probe(struct platform_device *pdev)
+ 
+ 	svc_i3c_master_reset(master);
+ 
++	if (of_property_read_bool(dev->of_node, "hdr-ddr")) {
++		dev_info(master->dev, "support hdr-ddr\n");
++		master->hdr_ddr = true;
++	}
++	if (of_property_read_bool(dev->of_node, "enable-hj"))
++		master->en_hj = true;
++	if (!of_property_read_u32(dev->of_node, "i3c-pp-scl-hi-period-ns", &val))
++		master->scl_timing.i3c_pp_hi = val;
++
++	if (!of_property_read_u32(dev->of_node, "i3c-pp-scl-lo-period-ns", &val))
++		master->scl_timing.i3c_pp_lo = val;
++
++	if (!of_property_read_u32(dev->of_node, "i3c-od-scl-hi-period-ns", &val))
++		master->scl_timing.i3c_od_hi = val;
++
++	if (!of_property_read_u32(dev->of_node, "i3c-od-scl-lo-period-ns", &val))
++		master->scl_timing.i3c_od_lo = val;
++
++	svc_i3c_master_clear_merrwarn(master);
++	svc_i3c_master_flush_fifo(master);
++
++	svc_i3c_setup_dma(pdev, master);
++	svc_i3c_init_debugfs(pdev, master);
++
+ 	/* Register the master */
+-	ret = i3c_master_register(&master->base, &pdev->dev,
+-				  &svc_i3c_master_ops, false);
++	ret = i3c_register(&master->base, &pdev->dev,
++			   &svc_i3c_master_ops, &svc_i3c_slave_ops, false);
+ 	if (ret)
+ 		goto rpm_disable;
+ 
+ 	pm_runtime_mark_last_busy(&pdev->dev);
+ 	pm_runtime_put_autosuspend(&pdev->dev);
+ 
++	if (master->en_hj) {
++		dev_info(master->dev, "enable hot-join\n");
++		svc_i3c_master_enable_interrupts(master, SVC_I3C_MINT_SLVSTART);
++	}
++	master->probe_done = true;
+ 	return 0;
+ 
+ rpm_disable:
+@@ -1686,6 +2772,7 @@ static int svc_i3c_master_probe(struct platform_device *pdev)
+ 	pm_runtime_put_noidle(&pdev->dev);
+ 	pm_runtime_set_suspended(&pdev->dev);
+ 	pm_runtime_disable(&pdev->dev);
++	debugfs_remove_recursive(master->debugfs);
+ 
+ err_disable_clks:
+ 	svc_i3c_master_unprepare_clks(master);
+@@ -1693,15 +2780,31 @@ static int svc_i3c_master_probe(struct platform_device *pdev)
+ 	return ret;
+ }
+ 
+-static void svc_i3c_master_remove(struct platform_device *pdev)
++static int svc_i3c_master_remove(struct platform_device *pdev)
+ {
+ 	struct svc_i3c_master *master = platform_get_drvdata(pdev);
++	int ret;
++
++	/* Avoid ibi events during driver unbinding */
++	writel(SVC_I3C_MINT_SLVSTART, master->regs + SVC_I3C_MINTCLR);
++
++	debugfs_remove_recursive(master->debugfs);
+ 
+ 	cancel_work_sync(&master->hj_work);
+-	i3c_master_unregister(&master->base);
++	ret = i3c_unregister(&master->base);
++	if (ret)
++		return ret;
+ 
+ 	pm_runtime_dont_use_autosuspend(&pdev->dev);
+ 	pm_runtime_disable(&pdev->dev);
++
++	if (master->use_dma) {
++		dma_free_coherent(master->dev, MAX_DMA_COUNT * 4, master->dma_tx_buf,
++				  master->dma_tx_addr);
++		dma_free_coherent(master->dev, MAX_DMA_COUNT, master->dma_rx_buf,
++				  master->dma_rx_addr);
++	}
++	return 0;
+ }
+ 
+ static void svc_i3c_save_regs(struct svc_i3c_master *master)
+@@ -1759,7 +2862,7 @@ MODULE_DEVICE_TABLE(of, svc_i3c_master_of_match_tbl);
+ 
+ static struct platform_driver svc_i3c_master = {
+ 	.probe = svc_i3c_master_probe,
+-	.remove_new = svc_i3c_master_remove,
++	.remove = svc_i3c_master_remove,
+ 	.driver = {
+ 		.name = "silvaco-i3c-master",
+ 		.of_match_table = svc_i3c_master_of_match_tbl,
+diff --git a/drivers/i3c/mctp/Kconfig b/drivers/i3c/mctp/Kconfig
+new file mode 100644
+index 000000000000..fe635940138b
+--- /dev/null
++++ b/drivers/i3c/mctp/Kconfig
+@@ -0,0 +1,14 @@
++# SPDX-License-Identifier: GPL-2.0-only
++config I3C_MCTP
++    tristate "I3C Controller MCTP driver"
++    depends on I3C
++help
++    Say yes here to enable the I3C MCTP driver for I3C HW that is
++    configured as an I3C Controller Device on the I3C Bus.
++
++config I3C_TARGET_MCTP
++    tristate "I3C Target MCTP driver"
++    depends on I3C
++help
++    Say yes here to enable the I3C MCTP driver for I3C HW that is
++    configured as an I3C Target Device on the I3C Bus.
+diff --git a/drivers/i3c/mctp/Makefile b/drivers/i3c/mctp/Makefile
+new file mode 100644
+index 000000000000..05eb78684843
+--- /dev/null
++++ b/drivers/i3c/mctp/Makefile
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0-only
++obj-$(CONFIG_I3C_MCTP)		+= i3c-mctp.o
++obj-$(CONFIG_I3C_TARGET_MCTP)	+= i3c-target-mctp.o
+diff --git a/drivers/i3c/mctp/i3c-mctp.c b/drivers/i3c/mctp/i3c-mctp.c
+new file mode 100644
+index 000000000000..52f50deee0cb
+--- /dev/null
++++ b/drivers/i3c/mctp/i3c-mctp.c
+@@ -0,0 +1,624 @@
++// SPDX-License-Identifier: GPL-2.0
++/* Copyright (C) 2022 Intel Corporation.*/
++
++#include <linux/cdev.h>
++#include <linux/fs.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/poll.h>
++#include <linux/preempt.h>
++#include <linux/ptr_ring.h>
++#include <linux/slab.h>
++#include <linux/timer.h>
++#include <linux/types.h>
++#include <linux/workqueue.h>
++
++#include <linux/i3c/device.h>
++
++#include <linux/i3c/mctp/i3c-mctp.h>
++
++#define I3C_MCTP_MINORS				32
++#define CCC_DEVICE_STATUS_PENDING_INTR(x)	(((x) & GENMASK(3, 0)) >> 0)
++#define POLLING_TIMEOUT_MS			50
++#define MCTP_INTERRUPT_NUMBER			1
++#define RX_RING_COUNT				16
++#define I3C_MCTP_MIN_TRANSFER_SIZE		69
++#define I3C_MCTP_IBI_PAYLOAD_SIZE		2
++#define POLL_MODE				BIT(0)
++
++static const struct i3c_device_id i3c_mctp_ids[] = {
++	I3C_DEVICE(0x319, 0x8000, (void *)POLL_MODE),
++	I3C_CLASS(0xCC, 0),
++	{ },
++};
++
++struct i3c_mctp {
++	struct i3c_device *i3c;
++	struct cdev cdev;
++	struct device *dev;
++	struct delayed_work polling_work;
++	struct platform_device *i3c_peci;
++	int id;
++	/*
++	 * Restrict an access to the /dev descriptor to one
++	 * user at a time.
++	 */
++	spinlock_t device_file_lock;
++	int device_open;
++	/* Currently only one userspace client is supported */
++	struct i3c_mctp_client *default_client;
++	struct i3c_mctp_client *peci_client;
++	u16 max_read_len;
++	u16 max_write_len;
++	bool poll_mode;
++};
++
++struct i3c_mctp_client {
++	struct i3c_mctp *priv;
++	struct ptr_ring rx_queue;
++	wait_queue_head_t wait_queue;
++};
++
++static struct class *i3c_mctp_class;
++static dev_t i3c_mctp_devt;
++static DEFINE_IDA(i3c_mctp_ida);
++
++static struct kmem_cache *packet_cache;
++
++/**
++ * i3c_mctp_packet_alloc() - allocates i3c_mctp_packet
++ *
++ * @flags: the type of memory to allocate
++ *
++ * Allocates i3c_mctp_packet via slab allocation
++ * Return: pointer to the packet, NULL if some error occurred
++ */
++void *i3c_mctp_packet_alloc(gfp_t flags)
++{
++	return kmem_cache_alloc(packet_cache, flags);
++}
++EXPORT_SYMBOL_GPL(i3c_mctp_packet_alloc);
++
++/**
++ * i3c_mctp_packet_free() - frees i3c_mctp_packet
++ *
++ * @packet: pointer to the packet which should be freed
++ *
++ * Frees i3c_mctp_packet previously allocated via slab allocation
++ */
++void i3c_mctp_packet_free(void *packet)
++{
++	kmem_cache_free(packet_cache, packet);
++}
++EXPORT_SYMBOL_GPL(i3c_mctp_packet_free);
++
++static void i3c_mctp_client_free(struct i3c_mctp_client *client)
++{
++	ptr_ring_cleanup(&client->rx_queue, &i3c_mctp_packet_free);
++
++	kfree(client);
++}
++
++static struct i3c_mctp_client *i3c_mctp_client_alloc(struct i3c_mctp *priv)
++{
++	struct i3c_mctp_client *client;
++	int ret;
++
++	client = kzalloc(sizeof(*client), GFP_KERNEL);
++	if (!client)
++		goto out;
++
++	client->priv = priv;
++	ret = ptr_ring_init(&client->rx_queue, RX_RING_COUNT, GFP_KERNEL);
++	if (ret)
++		return ERR_PTR(ret);
++	init_waitqueue_head(&client->wait_queue);
++out:
++	return client;
++}
++
++static struct i3c_mctp_client *i3c_mctp_find_client(struct i3c_mctp *priv,
++						    struct i3c_mctp_packet *packet)
++{
++	u8 *msg_hdr = (u8 *)packet->data.payload;
++	u8 mctp_type = msg_hdr[MCTP_MSG_HDR_MSG_TYPE_OFFSET];
++	u16 vendor = (msg_hdr[MCTP_MSG_HDR_VENDOR_OFFSET] << 8
++		      | msg_hdr[MCTP_MSG_HDR_VENDOR_OFFSET + 1]);
++	u8 intel_msg_op_code = msg_hdr[MCTP_MSG_HDR_OPCODE_OFFSET];
++
++	if (priv->peci_client && mctp_type == MCTP_MSG_TYPE_VDM_PCI &&
++	    vendor == MCTP_VDM_PCI_INTEL_VENDOR_ID && intel_msg_op_code == MCTP_VDM_PCI_INTEL_PECI)
++		return priv->peci_client;
++
++	return priv->default_client;
++}
++
++static struct i3c_mctp_packet *i3c_mctp_read_packet(struct i3c_device *i3c)
++{
++	struct i3c_mctp *priv = dev_get_drvdata(i3cdev_to_dev(i3c));
++	struct i3c_mctp_packet *rx_packet;
++	struct i3c_priv_xfer xfers = {
++		.rnw = true,
++	};
++	int ret;
++
++	rx_packet = i3c_mctp_packet_alloc(GFP_KERNEL);
++	if (!rx_packet)
++		return ERR_PTR(-ENOMEM);
++
++	rx_packet->size = I3C_MCTP_PACKET_SIZE;
++	xfers.len = rx_packet->size;
++	xfers.data.in = &rx_packet->data;
++
++	/* Check against packet size + PEC byte to make sure that we always try to read max */
++	if (priv->max_read_len < xfers.len) {
++		dev_dbg(i3cdev_to_dev(i3c), "Length mismatch. MRL = %d, xfers.len = %d",
++			priv->max_read_len, xfers.len);
++		i3c_mctp_packet_free(rx_packet);
++		return ERR_PTR(-EINVAL);
++	}
++
++	ret = i3c_device_do_priv_xfers(i3c, &xfers, 1);
++	if (ret) {
++		i3c_mctp_packet_free(rx_packet);
++		return ERR_PTR(ret);
++	}
++	rx_packet->size = xfers.len;
++
++	return rx_packet;
++}
++
++static void i3c_mctp_dispatch_packet(struct i3c_mctp *priv, struct i3c_mctp_packet *packet)
++{
++	struct i3c_mctp_client *client = i3c_mctp_find_client(priv, packet);
++	int ret;
++
++	ret = ptr_ring_produce(&client->rx_queue, packet);
++	if (ret)
++		i3c_mctp_packet_free(packet);
++	else
++		wake_up_all(&client->wait_queue);
++}
++
++static void i3c_mctp_polling_work(struct work_struct *work)
++{
++	struct i3c_mctp *priv = container_of(to_delayed_work(work), struct i3c_mctp, polling_work);
++	struct i3c_device *i3cdev = priv->i3c;
++	struct i3c_mctp_packet *rx_packet;
++	struct i3c_device_info info;
++	int ret;
++
++	i3c_device_get_info(i3cdev, &info);
++	ret = i3c_device_getstatus_ccc(i3cdev, &info);
++	if (ret)
++		goto out;
++
++	if (CCC_DEVICE_STATUS_PENDING_INTR(info.status) != MCTP_INTERRUPT_NUMBER)
++		goto out;
++
++	rx_packet = i3c_mctp_read_packet(i3cdev);
++	if (IS_ERR(rx_packet))
++		goto out;
++
++	i3c_mctp_dispatch_packet(priv, rx_packet);
++out:
++	schedule_delayed_work(&priv->polling_work, msecs_to_jiffies(POLLING_TIMEOUT_MS));
++}
++
++static ssize_t i3c_mctp_write(struct file *file, const char __user *buf, size_t count,
++			      loff_t *f_pos)
++{
++	struct i3c_mctp *priv = file->private_data;
++	struct i3c_device *i3c = priv->i3c;
++	struct i3c_priv_xfer xfers = {
++		.rnw = false,
++		.len = count,
++	};
++	u8 *data;
++	int ret;
++
++	/*
++	 * Check against packet size + PEC byte
++	 * to not send more data than it was set in the probe
++	 */
++	if (priv->max_write_len < xfers.len + 1) {
++		dev_dbg(i3cdev_to_dev(i3c), "Length mismatch. MWL = %d, xfers.len = %d",
++			priv->max_write_len, xfers.len);
++		return -EINVAL;
++	}
++
++	data = memdup_user(buf, count);
++	if (IS_ERR(data))
++		return PTR_ERR(data);
++
++	xfers.data.out = data;
++
++	ret = i3c_device_do_priv_xfers(i3c, &xfers, 1);
++	kfree(data);
++	return ret ?: count;
++}
++
++static ssize_t i3c_mctp_read(struct file *file, char __user *buf, size_t count, loff_t *f_pos)
++{
++	struct i3c_mctp *priv = file->private_data;
++	struct i3c_mctp_client *client = priv->default_client;
++	struct i3c_mctp_packet *rx_packet;
++
++	rx_packet = ptr_ring_consume(&client->rx_queue);
++	if (!rx_packet)
++		return 0;
++
++	if (count > rx_packet->size)
++		count = rx_packet->size;
++
++	if (copy_to_user(buf, &rx_packet->data, count))
++		return -EFAULT;
++
++	i3c_mctp_packet_free(rx_packet);
++
++	return count;
++}
++
++static int i3c_mctp_open(struct inode *inode, struct file *file)
++{
++	struct i3c_mctp *priv = container_of(inode->i_cdev, struct i3c_mctp, cdev);
++
++	spin_lock(&priv->device_file_lock);
++	if (priv->device_open) {
++		spin_unlock(&priv->device_file_lock);
++		return -EBUSY;
++	}
++	priv->device_open++;
++	spin_unlock(&priv->device_file_lock);
++
++	file->private_data = priv;
++
++	return 0;
++}
++
++static int i3c_mctp_release(struct inode *inode, struct file *file)
++{
++	struct i3c_mctp *priv = file->private_data;
++
++	spin_lock(&priv->device_file_lock);
++	priv->device_open--;
++	spin_unlock(&priv->device_file_lock);
++
++	file->private_data = NULL;
++
++	return 0;
++}
++
++static __poll_t i3c_mctp_poll(struct file *file, struct poll_table_struct *pt)
++{
++	struct i3c_mctp *priv = file->private_data;
++	__poll_t ret = 0;
++
++	poll_wait(file, &priv->default_client->wait_queue, pt);
++
++	if (__ptr_ring_peek(&priv->default_client->rx_queue))
++		ret |= EPOLLIN;
++
++	return ret;
++}
++
++static const struct file_operations i3c_mctp_fops = {
++	.owner = THIS_MODULE,
++	.read = i3c_mctp_read,
++	.write = i3c_mctp_write,
++	.poll = i3c_mctp_poll,
++	.open = i3c_mctp_open,
++	.release = i3c_mctp_release,
++};
++
++/**
++ * i3c_mctp_add_peci_client() - registers PECI client
++ * @i3c: I3C device to get the PECI client for
++ *
++ * Return: pointer to PECI client, -ENOMEM - in case of client alloc fault
++ */
++struct i3c_mctp_client *i3c_mctp_add_peci_client(struct i3c_device *i3c)
++{
++	struct i3c_mctp *priv = dev_get_drvdata(i3cdev_to_dev(i3c));
++	struct i3c_mctp_client *client;
++
++	client = i3c_mctp_client_alloc(priv);
++	if (IS_ERR(client))
++		return ERR_PTR(-ENOMEM);
++
++	priv->peci_client = client;
++
++	return priv->peci_client;
++}
++EXPORT_SYMBOL_GPL(i3c_mctp_add_peci_client);
++
++/**
++ * i3c_mctp_remove_peci_client() - un-registers PECI client
++ * @client: i3c_mctp_client to be freed
++ */
++void i3c_mctp_remove_peci_client(struct i3c_mctp_client *client)
++{
++	struct i3c_mctp *priv = client->priv;
++
++	i3c_mctp_client_free(priv->peci_client);
++
++	priv->peci_client = NULL;
++}
++EXPORT_SYMBOL_GPL(i3c_mctp_remove_peci_client);
++
++static struct i3c_mctp *i3c_mctp_alloc(struct i3c_device *i3c)
++{
++	struct i3c_mctp *priv;
++	int id;
++
++	priv = devm_kzalloc(i3cdev_to_dev(i3c), sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return ERR_PTR(-ENOMEM);
++
++	id = ida_alloc(&i3c_mctp_ida, GFP_KERNEL);
++	if (id < 0) {
++		pr_err("i3c_mctp: no minor number available!\n");
++		return ERR_PTR(id);
++	}
++
++	priv->id = id;
++	priv->i3c = i3c;
++
++	spin_lock_init(&priv->device_file_lock);
++
++	return priv;
++}
++
++static void i3c_mctp_ibi_handler(struct i3c_device *dev, const struct i3c_ibi_payload *payload)
++{
++	struct i3c_mctp *priv = dev_get_drvdata(i3cdev_to_dev(dev));
++	struct i3c_mctp_packet *rx_packet;
++
++	rx_packet = i3c_mctp_read_packet(dev);
++	if (IS_ERR(rx_packet))
++		return;
++
++	i3c_mctp_dispatch_packet(priv, rx_packet);
++}
++
++static int i3c_mctp_init(struct i3c_driver *drv)
++{
++	int ret;
++
++	packet_cache = kmem_cache_create_usercopy("mctp-i3c-packet",
++						  sizeof(struct i3c_mctp_packet), 0, 0, 0,
++						  sizeof(struct i3c_mctp_packet), NULL);
++	if (IS_ERR(packet_cache)) {
++		ret = PTR_ERR(packet_cache);
++		goto out;
++	}
++
++	/* Dynamically request unused major number */
++	ret = alloc_chrdev_region(&i3c_mctp_devt, 0, I3C_MCTP_MINORS, "i3c-mctp");
++	if (ret)
++		goto out;
++
++	/* Create a class to populate sysfs entries*/
++	i3c_mctp_class = class_create("i3c-mctp");
++	if (IS_ERR(i3c_mctp_class)) {
++		ret = PTR_ERR(i3c_mctp_class);
++		goto out_unreg_chrdev;
++	}
++
++	i3c_driver_register(drv);
++
++	return 0;
++
++out_unreg_chrdev:
++	unregister_chrdev_region(i3c_mctp_devt, I3C_MCTP_MINORS);
++out:
++	pr_err("i3c_mctp: driver initialisation failed\n");
++	return ret;
++}
++
++static void i3c_mctp_free(struct i3c_driver *drv)
++{
++	i3c_driver_unregister(drv);
++	class_destroy(i3c_mctp_class);
++	unregister_chrdev_region(i3c_mctp_devt, I3C_MCTP_MINORS);
++	kmem_cache_destroy(packet_cache);
++}
++
++static int i3c_mctp_enable_ibi(struct i3c_device *i3cdev)
++{
++	struct i3c_ibi_setup ibireq = {
++		.handler = i3c_mctp_ibi_handler,
++		.max_payload_len = 2,
++		.num_slots = 10,
++	};
++	int ret;
++
++	ret = i3c_device_request_ibi(i3cdev, &ibireq);
++	if (ret)
++		return ret;
++	ret = i3c_device_enable_ibi(i3cdev);
++	if (ret)
++		i3c_device_free_ibi(i3cdev);
++
++	return ret;
++}
++
++/**
++ * i3c_mctp_get_eid() - receive MCTP EID assigned to the device
++ *
++ * @client: client for the device to get the EID for
++ * @domain_id: requested domain ID
++ * @eid: pointer to store EID value
++ *
++ * Receive MCTP endpoint ID dynamically assigned by the MCTP Bus Owner
++ * Return: 0 in case of success, a negative error code otherwise.
++ */
++int i3c_mctp_get_eid(struct i3c_mctp_client *client, u8 domain_id, u8 *eid)
++{
++	/* TODO: Implement EID assignment basing on domain ID */
++	*eid = 1;
++	return 0;
++}
++EXPORT_SYMBOL_GPL(i3c_mctp_get_eid);
++
++/**
++ * i3c_mctp_send_packet() - send mctp packet
++ *
++ * @tx_packet: the allocated packet that needs to be send via I3C
++ * @i3c: i3c device to send the packet to
++ *
++ * Return: 0 in case of success, a negative error code otherwise.
++ */
++int i3c_mctp_send_packet(struct i3c_device *i3c, struct i3c_mctp_packet *tx_packet)
++{
++	struct i3c_priv_xfer xfers = {
++		.rnw = false,
++		.len = tx_packet->size,
++		.data.out = &tx_packet->data,
++	};
++
++	return i3c_device_do_priv_xfers(i3c, &xfers, 1);
++}
++EXPORT_SYMBOL_GPL(i3c_mctp_send_packet);
++
++/**
++ * i3c_mctp_receive_packet() - receive mctp packet
++ *
++ * @client: i3c_mctp_client to receive the packet from
++ * @timeout: timeout, in jiffies
++ *
++ * The function will sleep for up to @timeout if no packet is ready to read.
++ *
++ * Returns struct i3c_mctp_packet from or ERR_PTR in case of error or the
++ * timeout elapsed.
++ */
++struct i3c_mctp_packet *i3c_mctp_receive_packet(struct i3c_mctp_client *client,
++						unsigned long timeout)
++{
++	struct i3c_mctp_packet *rx_packet;
++	int ret;
++
++	ret = wait_event_interruptible_timeout(client->wait_queue,
++					       __ptr_ring_peek(&client->rx_queue), timeout);
++	if (ret < 0)
++		return ERR_PTR(ret);
++	else if (ret == 0)
++		return ERR_PTR(-ETIME);
++
++	rx_packet = ptr_ring_consume(&client->rx_queue);
++	if (!rx_packet)
++		return ERR_PTR(-EAGAIN);
++
++	return rx_packet;
++}
++EXPORT_SYMBOL_GPL(i3c_mctp_receive_packet);
++
++static int i3c_mctp_probe(struct i3c_device *i3cdev)
++{
++	int ibi_payload_size = I3C_MCTP_IBI_PAYLOAD_SIZE;
++	struct device *dev = i3cdev_to_dev(i3cdev);
++	const struct i3c_device_id *id = i3c_device_match_id(i3cdev, i3c_mctp_ids);
++	struct i3c_device_info info;
++	struct i3c_mctp *priv;
++	int ret;
++
++	priv = i3c_mctp_alloc(i3cdev);
++	if (IS_ERR(priv))
++		return PTR_ERR(priv);
++
++	cdev_init(&priv->cdev, &i3c_mctp_fops);
++
++	priv->cdev.owner = THIS_MODULE;
++	ret = cdev_add(&priv->cdev, MKDEV(MAJOR(i3c_mctp_devt), priv->id), 1);
++	if (ret)
++		goto error_cdev;
++
++	/* register this i3c device with the driver core */
++	priv->dev = device_create(i3c_mctp_class, dev,
++				  MKDEV(MAJOR(i3c_mctp_devt), priv->id),
++				  NULL, "i3c-mctp-%d", priv->id);
++	if (IS_ERR(priv->dev)) {
++		ret = PTR_ERR(priv->dev);
++		goto error;
++	}
++
++	priv->default_client = i3c_mctp_client_alloc(priv);
++	if (IS_ERR(priv->default_client))
++		goto error;
++
++	dev_set_drvdata(i3cdev_to_dev(i3cdev), priv);
++
++	priv->i3c_peci = platform_device_register_data(i3cdev_to_dev(i3cdev), "peci-i3c", priv->id,
++						       NULL, 0);
++	if (IS_ERR(priv->i3c_peci))
++		dev_warn(priv->dev, "failed to register peci-i3c device\n");
++
++	if (id->data == (void *)POLL_MODE || i3c_mctp_enable_ibi(i3cdev)) {
++		INIT_DELAYED_WORK(&priv->polling_work, i3c_mctp_polling_work);
++		schedule_delayed_work(&priv->polling_work, msecs_to_jiffies(POLLING_TIMEOUT_MS));
++		ibi_payload_size = 0;
++		priv->poll_mode = true;
++	}
++
++	i3c_device_get_info(i3cdev, &info);
++
++	ret = i3c_device_getmrl_ccc(i3cdev, &info);
++	if (ret || info.max_read_len < I3C_MCTP_MIN_TRANSFER_SIZE)
++		ret = i3c_device_setmrl_ccc(i3cdev, &info, I3C_MCTP_MIN_TRANSFER_SIZE,
++					    ibi_payload_size);
++	if (ret && info.max_read_len < I3C_MCTP_MIN_TRANSFER_SIZE) {
++		dev_err(dev, "Failed to set MRL!, ret = %d\n", ret);
++		goto error_peci;
++	}
++	priv->max_read_len = info.max_read_len;
++
++	ret = i3c_device_getmwl_ccc(i3cdev, &info);
++	if (ret || info.max_write_len < I3C_MCTP_MIN_TRANSFER_SIZE)
++		ret = i3c_device_setmwl_ccc(i3cdev, &info, I3C_MCTP_MIN_TRANSFER_SIZE);
++	if (ret && info.max_write_len < I3C_MCTP_MIN_TRANSFER_SIZE) {
++		dev_err(dev, "Failed to set MWL!, ret = %d\n", ret);
++		goto error_peci;
++	}
++	priv->max_write_len = info.max_write_len;
++
++	return 0;
++
++error_peci:
++	platform_device_unregister(priv->i3c_peci);
++	i3c_device_disable_ibi(i3cdev);
++	i3c_device_free_ibi(i3cdev);
++error:
++	cdev_del(&priv->cdev);
++error_cdev:
++	put_device(dev);
++	return ret;
++}
++
++static void i3c_mctp_remove(struct i3c_device *i3cdev)
++{
++	struct i3c_mctp *priv = dev_get_drvdata(i3cdev_to_dev(i3cdev));
++
++	if (priv->poll_mode)
++		cancel_delayed_work_sync(&priv->polling_work);
++	i3c_device_disable_ibi(i3cdev);
++	i3c_device_free_ibi(i3cdev);
++	i3c_mctp_client_free(priv->default_client);
++	priv->default_client = NULL;
++	platform_device_unregister(priv->i3c_peci);
++
++	device_destroy(i3c_mctp_class, MKDEV(MAJOR(i3c_mctp_devt), priv->id));
++	cdev_del(&priv->cdev);
++	ida_free(&i3c_mctp_ida, priv->id);
++}
++
++static struct i3c_driver i3c_mctp_drv = {
++	.driver.name = "i3c-mctp",
++	.id_table = i3c_mctp_ids,
++	.probe = i3c_mctp_probe,
++	.remove = i3c_mctp_remove,
++};
++
++module_driver(i3c_mctp_drv, i3c_mctp_init, i3c_mctp_free);
++MODULE_AUTHOR("Oleksandr Shulzhenko <oleksandr.shulzhenko.viktorovych@intel.com>");
++MODULE_DESCRIPTION("I3C MCTP driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/i3c/mctp/i3c-target-mctp.c b/drivers/i3c/mctp/i3c-target-mctp.c
+new file mode 100644
+index 000000000000..3cb0ea55a5eb
+--- /dev/null
++++ b/drivers/i3c/mctp/i3c-target-mctp.c
+@@ -0,0 +1,389 @@
++// SPDX-License-Identifier: GPL-2.0
++/* Copyright (C) 2022 Intel Corporation.*/
++
++#include <linux/cdev.h>
++#include <linux/idr.h>
++#include <linux/module.h>
++#include <linux/poll.h>
++#include <linux/ptr_ring.h>
++#include <linux/workqueue.h>
++
++#include <linux/i3c/device.h>
++
++#define I3C_TARGET_MCTP_MINORS	32
++#define RX_RING_COUNT		16
++
++static struct class *i3c_target_mctp_class;
++static dev_t i3c_target_mctp_devt;
++static DEFINE_IDA(i3c_target_mctp_ida);
++
++struct mctp_client;
++
++struct i3c_target_mctp {
++	struct i3c_device *i3cdev;
++	struct cdev cdev;
++	int id;
++	struct mctp_client *client;
++	spinlock_t client_lock; /* to protect client access */
++};
++
++struct mctp_client {
++	struct kref ref;
++	struct i3c_target_mctp *priv;
++	struct ptr_ring rx_queue;
++	wait_queue_head_t wait_queue;
++};
++
++struct mctp_packet {
++	u8 *data;
++	u16 count;
++};
++
++static void *i3c_target_mctp_packet_alloc(u16 count)
++{
++	struct mctp_packet *packet;
++	u8 *data;
++
++	packet = kzalloc(sizeof(*packet), GFP_ATOMIC);
++	if (!packet)
++		return NULL;
++
++	data = kzalloc(count, GFP_ATOMIC);
++	if (!data) {
++		kfree(packet);
++		return NULL;
++	}
++
++	packet->data = data;
++	packet->count = count;
++
++	return packet;
++}
++
++static void i3c_target_mctp_packet_free(void *data)
++{
++	struct mctp_packet *packet = data;
++
++	kfree(packet->data);
++	kfree(packet);
++}
++
++static struct mctp_client *i3c_target_mctp_client_alloc(struct i3c_target_mctp *priv)
++{
++	struct mctp_client *client;
++
++	client = kzalloc(sizeof(*client), GFP_KERNEL);
++	if (!client)
++		goto out;
++
++	kref_init(&client->ref);
++	client->priv = priv;
++	ptr_ring_init(&client->rx_queue, RX_RING_COUNT, GFP_KERNEL);
++out:
++	return client;
++}
++
++static void i3c_target_mctp_client_free(struct kref *ref)
++{
++	struct mctp_client *client = container_of(ref, typeof(*client), ref);
++
++	ptr_ring_cleanup(&client->rx_queue, &i3c_target_mctp_packet_free);
++
++	kfree(client);
++}
++
++static void i3c_target_mctp_client_get(struct mctp_client *client)
++{
++	kref_get(&client->ref);
++}
++
++static void i3c_target_mctp_client_put(struct mctp_client *client)
++{
++	kref_put(&client->ref, &i3c_target_mctp_client_free);
++}
++
++static void
++i3c_target_mctp_rx_packet_enqueue(struct i3c_device *i3cdev, const u8 *data, size_t count)
++{
++	struct i3c_target_mctp *priv = dev_get_drvdata(i3cdev_to_dev(i3cdev));
++	struct mctp_client *client;
++	struct mctp_packet *packet;
++	int ret;
++
++	spin_lock(&priv->client_lock);
++	client = priv->client;
++	if (client)
++		i3c_target_mctp_client_get(client);
++	spin_unlock(&priv->client_lock);
++
++	if (!client)
++		return;
++
++	packet = i3c_target_mctp_packet_alloc(count);
++	if (!packet)
++		goto err;
++
++	memcpy(packet->data, data, count);
++
++	ret = ptr_ring_produce(&client->rx_queue, packet);
++	if (ret)
++		i3c_target_mctp_packet_free(packet);
++	else
++		wake_up_all(&client->wait_queue);
++err:
++	i3c_target_mctp_client_put(client);
++}
++
++static struct mctp_client *i3c_target_mctp_create_client(struct i3c_target_mctp *priv)
++{
++	struct mctp_client *client;
++	int ret;
++
++	/* Currently, we support just one client. */
++	spin_lock_irq(&priv->client_lock);
++	ret = priv->client ? -EBUSY : 0;
++	spin_unlock_irq(&priv->client_lock);
++
++	if (ret)
++		return ERR_PTR(ret);
++
++	client = i3c_target_mctp_client_alloc(priv);
++	if (!client)
++		return ERR_PTR(-ENOMEM);
++
++	init_waitqueue_head(&client->wait_queue);
++
++	spin_lock_irq(&priv->client_lock);
++	priv->client = client;
++	spin_unlock_irq(&priv->client_lock);
++
++	return client;
++}
++
++static void i3c_target_mctp_delete_client(struct mctp_client *client)
++{
++	struct i3c_target_mctp *priv = client->priv;
++
++	spin_lock_irq(&priv->client_lock);
++	priv->client = NULL;
++	spin_unlock_irq(&priv->client_lock);
++
++	i3c_target_mctp_client_put(client);
++}
++
++static int i3c_target_mctp_open(struct inode *inode, struct file *file)
++{
++	struct i3c_target_mctp *priv = container_of(inode->i_cdev, struct i3c_target_mctp, cdev);
++	struct mctp_client *client;
++
++	client = i3c_target_mctp_create_client(priv);
++	if (IS_ERR(client))
++		return PTR_ERR(client);
++
++	file->private_data = client;
++
++	return 0;
++}
++
++static int i3c_target_mctp_release(struct inode *inode, struct file *file)
++{
++	struct mctp_client *client = file->private_data;
++
++	i3c_target_mctp_delete_client(client);
++
++	return 0;
++}
++
++static ssize_t i3c_target_mctp_read(struct file *file, char __user *buf,
++				    size_t count, loff_t *ppos)
++{
++	struct mctp_client *client = file->private_data;
++	struct mctp_packet *rx_packet;
++
++	rx_packet = ptr_ring_consume_irq(&client->rx_queue);
++	if (!rx_packet)
++		return 0;
++
++	if (count < rx_packet->count) {
++		count = -EINVAL;
++		goto err_free;
++	}
++	if (count > rx_packet->count)
++		count = rx_packet->count;
++
++	if (copy_to_user(buf, rx_packet->data, count))
++		count = -EFAULT;
++err_free:
++	i3c_target_mctp_packet_free(rx_packet);
++
++	return count;
++}
++
++static ssize_t i3c_target_mctp_write(struct file *file, const char __user *buf,
++				     size_t count, loff_t *ppos)
++{
++	struct mctp_client *client = file->private_data;
++	struct i3c_target_mctp *priv = client->priv;
++	struct i3c_priv_xfer xfers[1] = {};
++	u8 *tx_data;
++	int ret;
++
++	tx_data = kzalloc(count, GFP_KERNEL);
++	if (!tx_data)
++		return -ENOMEM;
++
++	if (copy_from_user(tx_data, buf, count)) {
++		ret = -EFAULT;
++		goto out_packet;
++	}
++
++	xfers[0].data.out = tx_data;
++	xfers[0].len = count;
++
++	ret = i3c_device_do_priv_xfers(priv->i3cdev, xfers, ARRAY_SIZE(xfers));
++	if (ret)
++		goto out_packet;
++	ret = count;
++
++	/*
++	 * TODO: Add support for IBI generation - it should be done only if IBI
++	 * are enabled (the Active Controller may disabled them using CCC for
++	 * that). Otherwise (if IBIs are disabled), we should make sure that when
++	 * Active Controller issues GETSTATUS CCC the return value indicates
++	 * that data is ready.
++	 */
++out_packet:
++	kfree(tx_data);
++	return ret;
++}
++
++static __poll_t i3c_target_mctp_poll(struct file *file, struct poll_table_struct *pt)
++{
++	struct mctp_client *client = file->private_data;
++	__poll_t ret = 0;
++
++	poll_wait(file, &client->wait_queue, pt);
++
++	if (__ptr_ring_peek(&client->rx_queue))
++		ret |= EPOLLIN;
++
++	/*
++	 * TODO: Add support for "write" readiness.
++	 * DW-I3C has a hardware queue that has finite number of entries.
++	 * If we try to issue more writes that space in this queue allows for,
++	 * we're in trouble. This should be handled by error from write() and
++	 * poll() blocking for write events.
++	 */
++	return ret;
++}
++
++static const struct file_operations i3c_target_mctp_fops = {
++	.owner = THIS_MODULE,
++	.open = i3c_target_mctp_open,
++	.release = i3c_target_mctp_release,
++	.read = i3c_target_mctp_read,
++	.write = i3c_target_mctp_write,
++	.poll = i3c_target_mctp_poll,
++};
++
++static struct i3c_target_read_setup i3c_target_mctp_rx_packet_setup = {
++	.handler = i3c_target_mctp_rx_packet_enqueue,
++};
++
++static int i3c_target_mctp_probe(struct i3c_device *i3cdev)
++{
++	struct device *parent = i3cdev_to_dev(i3cdev);
++	struct i3c_target_mctp *priv;
++	struct device *dev;
++	int ret;
++
++	priv = devm_kzalloc(parent, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	ret = ida_alloc(&i3c_target_mctp_ida, GFP_KERNEL);
++	if (ret < 0)
++		return ret;
++	priv->id = ret;
++
++	priv->i3cdev = i3cdev;
++	spin_lock_init(&priv->client_lock);
++
++	cdev_init(&priv->cdev, &i3c_target_mctp_fops);
++	priv->cdev.owner = THIS_MODULE;
++	ret = cdev_add(&priv->cdev, i3c_target_mctp_devt, 1);
++	if (ret) {
++		ida_free(&i3c_target_mctp_ida, priv->id);
++		return ret;
++	}
++
++	dev = device_create(i3c_target_mctp_class, parent, i3c_target_mctp_devt,
++			    NULL, "i3c-mctp-target-%d", priv->id);
++	if (IS_ERR(dev)) {
++		ret = PTR_ERR(dev);
++		goto err;
++	}
++
++	i3cdev_set_drvdata(i3cdev, priv);
++
++	i3c_target_read_register(i3cdev, &i3c_target_mctp_rx_packet_setup);
++
++	return 0;
++err:
++	cdev_del(&priv->cdev);
++	ida_free(&i3c_target_mctp_ida, priv->id);
++
++	return ret;
++}
++
++static void i3c_target_mctp_remove(struct i3c_device *i3cdev)
++{
++	struct i3c_target_mctp *priv = dev_get_drvdata(i3cdev_to_dev(i3cdev));
++
++	device_destroy(i3c_target_mctp_class, i3c_target_mctp_devt);
++	cdev_del(&priv->cdev);
++	ida_free(&i3c_target_mctp_ida, priv->id);
++}
++
++static const struct i3c_device_id i3c_target_mctp_ids[] = {
++	I3C_CLASS(0xcc, 0x0),
++	{ },
++};
++
++static struct i3c_driver i3c_target_mctp_drv = {
++	.driver.name = "i3c-target-mctp",
++	.id_table = i3c_target_mctp_ids,
++	.probe = i3c_target_mctp_probe,
++	.remove = i3c_target_mctp_remove,
++	.target = true,
++};
++
++static int i3c_target_mctp_init(struct i3c_driver *drv)
++{
++	int ret;
++
++	ret = alloc_chrdev_region(&i3c_target_mctp_devt, 0,
++				  I3C_TARGET_MCTP_MINORS, "i3c-target-mctp");
++	if (ret)
++		return ret;
++
++	i3c_target_mctp_class = class_create("i3c-target-mctp");
++	if (IS_ERR(i3c_target_mctp_class)) {
++		unregister_chrdev_region(i3c_target_mctp_devt, I3C_TARGET_MCTP_MINORS);
++		return PTR_ERR(i3c_target_mctp_class);
++	}
++
++	return i3c_driver_register(drv);
++}
++
++static void i3c_target_mctp_fini(struct i3c_driver *drv)
++{
++	i3c_driver_unregister(drv);
++	class_destroy(i3c_target_mctp_class);
++	unregister_chrdev_region(i3c_target_mctp_devt, I3C_TARGET_MCTP_MINORS);
++}
++
++module_driver(i3c_target_mctp_drv, i3c_target_mctp_init, i3c_target_mctp_fini);
++MODULE_AUTHOR("Iwona Winiarska <iwona.winiarska@intel.com>");
++MODULE_DESCRIPTION("I3C Target MCTP driver");
++MODULE_LICENSE("GPL");
+diff --git a/include/linux/i3c/ccc.h b/include/linux/i3c/ccc.h
+index ad59a4ae60d1..b985d26b50ec 100644
+--- a/include/linux/i3c/ccc.h
++++ b/include/linux/i3c/ccc.h
+@@ -32,6 +32,8 @@
+ #define I3C_CCC_DEFSLVS			I3C_CCC_ID(0x8, true)
+ #define I3C_CCC_ENTTM			I3C_CCC_ID(0xb, true)
+ #define I3C_CCC_ENTHDR(x)		I3C_CCC_ID(0x20 + (x), true)
++#define I3C_CCC_SETAASA			I3C_CCC_ID(0x29, true)
++#define I3C_CCC_SETHID			I3C_CCC_ID(0x61, true)
+ 
+ /* Unicast-only commands */
+ #define I3C_CCC_SETDASA			I3C_CCC_ID(0x7, false)
+@@ -243,6 +245,15 @@ struct i3c_ccc_setbrgtgt {
+ 	struct i3c_ccc_bridged_slave_desc bslaves[];
+ } __packed;
+ 
++
++/**
++ * struct i3c_ccc_sethid - payload passed to SETHID CCC
++ *
++ * @hid: 3-bit HID
++ */
++struct i3c_ccc_sethid {
++	u8 hid;
++};
+ /**
+  * enum i3c_sdr_max_data_rate - max data rate values for private SDR transfers
+  */
+diff --git a/include/linux/i3c/device.h b/include/linux/i3c/device.h
+index ef6217da8253..0bba93de4668 100644
+--- a/include/linux/i3c/device.h
++++ b/include/linux/i3c/device.h
+@@ -77,6 +77,7 @@ struct i3c_priv_xfer {
+  */
+ enum i3c_dcr {
+ 	I3C_DCR_GENERIC_DEVICE = 0,
++	I3C_DCR_HUB = 0xC2,
+ };
+ 
+ #define I3C_PID_MANUF_ID(pid)		(((pid) & GENMASK_ULL(47, 33)) >> 33)
+@@ -131,6 +132,7 @@ struct i3c_device_info {
+ 	u32 max_read_turnaround;
+ 	u16 max_read_len;
+ 	u16 max_write_len;
++	__be16 status;
+ };
+ 
+ /*
+@@ -181,6 +183,7 @@ struct i3c_driver {
+ 	int (*probe)(struct i3c_device *dev);
+ 	void (*remove)(struct i3c_device *dev);
+ 	const struct i3c_device_id *id_table;
++	bool target;
+ };
+ 
+ static inline struct i3c_driver *drv_to_i3cdrv(struct device_driver *drv)
+@@ -304,6 +307,7 @@ int i3c_device_do_priv_xfers(struct i3c_device *dev,
+ 			     struct i3c_priv_xfer *xfers,
+ 			     int nxfers);
+ 
++int i3c_device_generate_ibi(struct i3c_device *dev, const u8 *data, int len);
+ int i3c_device_do_setdasa(struct i3c_device *dev);
+ 
+ void i3c_device_get_info(const struct i3c_device *dev, struct i3c_device_info *info);
+@@ -344,5 +348,18 @@ int i3c_device_request_ibi(struct i3c_device *dev,
+ void i3c_device_free_ibi(struct i3c_device *dev);
+ int i3c_device_enable_ibi(struct i3c_device *dev);
+ int i3c_device_disable_ibi(struct i3c_device *dev);
++int i3c_device_send_ccc_cmd(struct i3c_device *dev, u8 ccc_id);
++struct i3c_target_read_setup {
++	void (*handler)(struct i3c_device *dev, const u8 *data, size_t len);
++};
++
++int i3c_target_read_register(struct i3c_device *dev, const struct i3c_target_read_setup *setup);
++
++int i3c_device_getstatus_ccc(struct i3c_device *dev, struct i3c_device_info *info);
++int i3c_device_setmrl_ccc(struct i3c_device *dev, struct i3c_device_info *info, __be16 read_len,
++			  u8 ibi_len);
++int i3c_device_setmwl_ccc(struct i3c_device *dev, struct i3c_device_info *info, __be16 write_len);
++int i3c_device_getmrl_ccc(struct i3c_device *dev, struct i3c_device_info *info);
++int i3c_device_getmwl_ccc(struct i3c_device *dev, struct i3c_device_info *info);
+ 
+ #endif /* I3C_DEV_H */
+diff --git a/include/linux/i3c/master.h b/include/linux/i3c/master.h
+index db909ef79be4..886d925c8d2e 100644
+--- a/include/linux/i3c/master.h
++++ b/include/linux/i3c/master.h
+@@ -23,6 +23,7 @@
+ #define I3C_MAX_ADDR			GENMASK(6, 0)
+ 
+ struct i2c_client;
++struct i3c_target_ops;
+ 
+ /* notifier actions. notifier call data is the struct i3c_bus */
+ enum {
+@@ -190,11 +191,21 @@ struct i3c_dev_boardinfo {
+ 	struct device_node *of_node;
+ };
+ 
++/**
++ * struct i3c_target_info - target information attached to a specific device
++ * @read handler: handler specified at i3c_target_read_register() call time.
++ */
++
++struct i3c_target_info {
++	void (*read_handler)(struct i3c_device *dev, const u8 *data, size_t len);
++};
++
+ /**
+  * struct i3c_dev_desc - I3C device descriptor
+  * @common: common part of the I3C device descriptor
+  * @info: I3C device information. Will be automatically filled when you create
+  *	  your device with i3c_master_add_i3c_dev_locked()
++ * @target_info: I3C target information.
+  * @ibi_lock: lock used to protect the &struct_i3c_device->ibi
+  * @ibi: IBI info attached to a device. Should be NULL until
+  *	 i3c_device_request_ibi() is called
+@@ -213,6 +224,7 @@ struct i3c_dev_boardinfo {
+ struct i3c_dev_desc {
+ 	struct i3c_i2c_dev_desc common;
+ 	struct i3c_device_info info;
++	struct i3c_target_info target_info;
+ 	struct mutex ibi_lock;
+ 	struct i3c_device_ibi_info *ibi;
+ 	struct i3c_device *dev;
+@@ -349,6 +361,7 @@ struct i3c_bus {
+ 		struct list_head i2c;
+ 	} devs;
+ 	struct rw_semaphore lock;
++	bool jesd403;
+ };
+ 
+ /**
+@@ -469,6 +482,8 @@ struct i3c_master_controller_ops {
+  *	 registered to the I2C subsystem to be as transparent as possible to
+  *	 existing I2C drivers
+  * @ops: master operations. See &struct i3c_master_controller_ops
++ * @target_ops: target operations. See &struct i3c_target_ops
++ * @target: true if the underlying I3C device acts as a target on I3C bus
+  * @secondary: true if the master is a secondary master
+  * @init_done: true when the bus initialization is done
+  * @boardinfo.i3c: list of I3C  boardinfo objects
+@@ -491,6 +506,8 @@ struct i3c_master_controller {
+ 	struct i3c_dev_desc *this;
+ 	struct i2c_adapter i2c;
+ 	const struct i3c_master_controller_ops *ops;
++	const struct i3c_target_ops *target_ops;
++	unsigned int target : 1;
+ 	unsigned int secondary : 1;
+ 	unsigned int init_done : 1;
+ 	struct {
+@@ -550,6 +567,13 @@ int i3c_master_register(struct i3c_master_controller *master,
+ 			bool secondary);
+ void i3c_master_unregister(struct i3c_master_controller *master);
+ 
++int i3c_register(struct i3c_master_controller *master,
++		 struct device *parent,
++		 const struct i3c_master_controller_ops *master_ops,
++		 const struct i3c_target_ops *target_ops,
++		 bool secondary);
++int i3c_unregister(struct i3c_master_controller *master);
++
+ /**
+  * i3c_dev_get_master_data() - get master private data attached to an I3C
+  *			       device descriptor
+diff --git a/include/linux/i3c/mctp/i3c-mctp.h b/include/linux/i3c/mctp/i3c-mctp.h
+new file mode 100644
+index 000000000000..596759faa87d
+--- /dev/null
++++ b/include/linux/i3c/mctp/i3c-mctp.h
+@@ -0,0 +1,50 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/* Copyright (C) 2022 Intel Corporation.*/
++
++#ifndef I3C_MCTP_H
++#define I3C_MCTP_H
++
++#define I3C_MCTP_PACKET_SIZE	255
++#define I3C_MCTP_PAYLOAD_SIZE	251
++#define I3C_MCTP_HDR_SIZE	4
++
++/* PECI MCTP Intel VDM definitions */
++#define MCTP_MSG_TYPE_VDM_PCI		0x7E
++#define MCTP_VDM_PCI_INTEL_VENDOR_ID	0x8086
++#define MCTP_VDM_PCI_INTEL_PECI		0x2
++
++/* MCTP message header offsets */
++#define MCTP_MSG_HDR_MSG_TYPE_OFFSET	0
++#define MCTP_MSG_HDR_VENDOR_OFFSET	1
++#define MCTP_MSG_HDR_OPCODE_OFFSET	4
++
++struct i3c_mctp_client;
++
++struct mctp_protocol_hdr {
++	u8 ver;
++	u8 dest;
++	u8 src;
++	u8 flags_seq_tag;
++} __packed;
++
++struct i3c_mctp_packet_data {
++	u8 protocol_hdr[I3C_MCTP_HDR_SIZE];
++	u8 payload[I3C_MCTP_PAYLOAD_SIZE];
++};
++
++struct i3c_mctp_packet {
++	struct i3c_mctp_packet_data data;
++	u32 size;
++};
++
++void *i3c_mctp_packet_alloc(gfp_t flags);
++void i3c_mctp_packet_free(void *packet);
++
++int i3c_mctp_get_eid(struct i3c_mctp_client *client, u8 domain_id, u8 *eid);
++int i3c_mctp_send_packet(struct i3c_device *i3c, struct i3c_mctp_packet *tx_packet);
++struct i3c_mctp_packet *i3c_mctp_receive_packet(struct i3c_mctp_client *client,
++						unsigned long timeout);
++struct i3c_mctp_client *i3c_mctp_add_peci_client(struct i3c_device *i3c);
++void i3c_mctp_remove_peci_client(struct i3c_mctp_client *client);
++
++#endif /* I3C_MCTP_H */
+diff --git a/include/linux/i3c/target.h b/include/linux/i3c/target.h
+new file mode 100644
+index 000000000000..9e71124b5325
+--- /dev/null
++++ b/include/linux/i3c/target.h
+@@ -0,0 +1,23 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/* Copyright (c) 2022, Intel Corporation */
++
++#ifndef I3C_TARGET_H
++#define I3C_TARGET_H
++
++#include <linux/device.h>
++#include <linux/i3c/device.h>
++
++struct i3c_master_controller;
++
++struct i3c_target_ops {
++	int (*bus_init)(struct i3c_master_controller *master);
++	void (*bus_cleanup)(struct i3c_master_controller *master);
++	int (*priv_xfers)(struct i3c_dev_desc *dev, struct i3c_priv_xfer *xfers, int nxfers);
++	int (*generate_ibi)(struct i3c_dev_desc *dev, const u8 *data, int len);
++};
++
++int i3c_target_register(struct i3c_master_controller *master, struct device *parent,
++			const struct i3c_target_ops *ops);
++int i3c_target_unregister(struct i3c_master_controller *master);
++
++#endif
+diff --git a/include/uapi/linux/i3c/i3cdev.h b/include/uapi/linux/i3c/i3cdev.h
+new file mode 100644
+index 000000000000..0897313f5516
+--- /dev/null
++++ b/include/uapi/linux/i3c/i3cdev.h
+@@ -0,0 +1,38 @@
++/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
++/*
++ * Copyright (c) 2019 Synopsys, Inc. and/or its affiliates.
++ *
++ * Author: Vitor Soares <vitor.soares@synopsys.com>
++ */
++
++#ifndef _UAPI_I3C_DEV_H_
++#define _UAPI_I3C_DEV_H_
++
++#include <linux/types.h>
++#include <linux/ioctl.h>
++
++/* IOCTL commands */
++#define I3C_DEV_IOC_MAGIC	0x07
++
++/**
++ * struct i3c_ioc_priv_xfer - I3C SDR ioctl private transfer
++ * @data: Holds pointer to userspace buffer with transmit data.
++ * @len: Length of data buffer buffers, in bytes.
++ * @rnw: encodes the transfer direction. true for a read, false for a write
++ */
++struct i3c_ioc_priv_xfer {
++	__u64 data;
++	__u16 len;
++	__u8 rnw;
++	__u8 pad[5];
++};
++
++
++#define I3C_PRIV_XFER_SIZE(N)	\
++	((((sizeof(struct i3c_ioc_priv_xfer)) * (N)) < (1 << _IOC_SIZEBITS)) \
++	? ((sizeof(struct i3c_ioc_priv_xfer)) * (N)) : 0)
++
++#define I3C_IOC_PRIV_XFER(N)	\
++	_IOC(_IOC_READ|_IOC_WRITE, I3C_DEV_IOC_MAGIC, 30, I3C_PRIV_XFER_SIZE(N))
++
++#endif
+-- 
+2.34.1
+
