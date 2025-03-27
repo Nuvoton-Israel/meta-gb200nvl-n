@@ -11,13 +11,17 @@ cd ~/nvBMC
 ```ruby
 . setup gb200nvl-bmc-n
 ```
-## scm target
+## bmc-scm target
 ```ruby
 . setup gb200nvl-scm-n
 ```
 ## hmc target
 ```ruby
 . setup gb200nvl-hmc-n
+```
+## hmc-scm target
+```ruby
+. setup gb200nvl-hmc-scm-n
 ```
 ## Build
 ```ruby
