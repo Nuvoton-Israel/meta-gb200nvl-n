@@ -43,6 +43,7 @@ SRC_URI:append = " file://1245-i2c-npcm-Modify-timeout-evaluation-mechanism.patc
 SRC_URI:append = " file://1246-i2c-npcm-Assign-client-address-earlier-for-i2c_recov.patch"
 SRC_URI:append = " file://1247-i2c-npcm-use-i2c-frequency-table.patch"
 SRC_URI:append = " file://1248-i2c-npcm-Enable-slave-in-eob-interrupt.patch"
+SRC_URI:append = " file://1249-i2c-npcm-Add-slave-enable-disable-function.patch"
 
 # NPCM8XX i3c driver
 SRC_URI:append = " file://1250-i3c-sync-latest-svc-i3c-driver-and-header.patch"
@@ -85,3 +86,5 @@ SRC_URI:append = " file://1320-media-nuvoton-Add-head1-hsync-support.patch"
 # NPCM8XX pinctrl driver
 SRC_URI:append = " file://1330-pinctrl-npcm8xx-remove-CTS-and-RTS-pins-from-bmcuart.patch"
 SRC_URI:append = " file://1331-driver-pinctrl-npcm8xx-Set-strict-as-true.patch"
+
+SRC_URI:append = " file://1340-ipmi-ssif_bmc-add-npcm-slave-disable-enable-method.patch"
