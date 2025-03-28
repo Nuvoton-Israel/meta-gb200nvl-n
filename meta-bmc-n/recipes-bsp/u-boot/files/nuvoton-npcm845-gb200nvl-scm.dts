@@ -20,7 +20,7 @@
 		spi4 = &pspi;
 		usb0 = &udc0;
 		usb1 = &ehci1;
-		usb2 = &udc8;
+		usb2 = &ehci2;
 	};
 
 	chosen {
@@ -141,9 +141,9 @@
 	phys = <&usbphy2 NPCM_USBH1>;
 };
 
-&udc8 {
+&ehci2 {
 	status = "okay";
-	phys = <&usbphy3 NPCM_UDC8>;
+	phys = <&usbphy3 NPCM_USBH1>;
 };
 
 &rng {
