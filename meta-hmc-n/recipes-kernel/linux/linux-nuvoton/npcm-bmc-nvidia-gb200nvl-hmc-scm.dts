@@ -375,9 +375,15 @@
 
 &i2c5 {
 	status = "okay";
-	// NCT7715W temp sensor
+	temperature-sensor@48 {
+		compatible = "ti,tmp75";
+		reg = <0x48>;
+	};
 
-	// CAT34C02VP2IGT4A eeprom
+	eeprom@50 {
+		compatible = "atmel,24c02";
+		reg = <0x50>;
+	};
 };
 
 &i2c6 {
