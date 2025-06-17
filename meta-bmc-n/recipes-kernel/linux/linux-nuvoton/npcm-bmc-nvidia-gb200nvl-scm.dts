@@ -344,9 +344,15 @@
 		     &pspi_di_slew
 		     &pspi_d0_slew
 		     &pspi_ck_slew
-		     &pin233_ol>;
+		     &pin70_oh
+		     &pin39_oh>;
 
 	// NPCT760AACYX TPM
+	tpm@0 {
+		compatible = "infineon,slb9670", "tcg,tpm_tis-spi";
+		spi-max-frequency = <1000000>;
+		reg = <0>;
+	};
 };
 
 &i2c0 {
@@ -605,6 +611,19 @@
 		pins = "GPIO19/PSPI_CK/SMB4B_SCL";
 		slew-rate = <1>;
 	};
+
+	pin70_oh: pin70-oh {
+		pins = "GPIO70/FANIN6";
+		bias-disable;
+		output-high;
+	};
+
+	pin39_oh: pin39-oh {
+		pins = "GPIO39/SMB3B_SDA/SMB22_SDA";
+		bias-disable;
+		output-high;
+	};
+
 
 	pin120_input: pin120-input {
 		pins = "GPIO120/SMB2C_SDA";
