@@ -13,10 +13,10 @@
 			bias-disable;
 			input-enable;
 		};
-		gpio39ol_pins: gpio39ol-pins {
+		gpio39o_pins: gpio39o-pins {
 			pins = "GPIO39/SMB3B_SDA/SMB22_SDA";
 			bias-disable;
-			output-low;
+			output-high;
 		};
 		gpio40_pins: gpio40-pins {
 			pins = "GPIO40/SMB3B_SCL/SMB22_SCL";
@@ -48,10 +48,10 @@
 			bias-disable;
 			output-high;
 		};
-		gpio70ol_pins: gpio70ol-pins {
+		gpio70o_pins: gpio70o-pins {
 			pins = "GPIO70/FANIN6";
 			bias-disable;
-			output-low;
+			output-high;
 		};
 		gpio71_pins: gpio71-pins {
 			pins = "GPIO71/FANIN7";
@@ -125,6 +125,11 @@
 		};
 		gpio168o_pins: gpio168o-pins {
 			pins = "GPIO168/ESPI_nALERT/SERIRQ";
+			bias-disable;
+			output-high;
+		};
+		gpio233o_pins: gpio233o-pins {
+			pins = "GPIO233/SPI1_nCS1/FM1_CSO";
 			bias-disable;
 			output-high;
 		};

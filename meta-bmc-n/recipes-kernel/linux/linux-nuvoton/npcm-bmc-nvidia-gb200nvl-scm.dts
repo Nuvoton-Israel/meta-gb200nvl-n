@@ -343,10 +343,14 @@
 	pinctrl-0 = <&pspi_pins
 		     &pspi_di_slew
 		     &pspi_d0_slew
-		     &pspi_ck_slew
-		     &pin233_ol>;
+		     &pspi_ck_slew>;
 
 	// NPCT760AACYX TPM
+	spi-max-frequency = <1000000>;
+	tpmdev@0 {
+		compatible = "infineon,slb9670", "tcg,tpm_tis-spi";
+		reg = <0>;
+	};
 };
 
 &i2c0 {

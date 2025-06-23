@@ -172,14 +172,14 @@
 		     &r1oen_pins
 		     &gpio8o_pins
 		     &gpio16_pins
-		     &gpio39ol_pins
+		     &gpio39o_pins
 		     &gpio40_pins
 		     &gpio65o_pins
 		     &gpio66ol_pins
 		     &gpio67ol_pins
 		     &gpio68o_pins
 		     &gpio69o_pins
-		     &gpio70ol_pins
+		     &gpio70o_pins
 		     &gpio71_pins
 		     &gpio72o_pins
 		     &gpio73ol_pins
@@ -194,5 +194,6 @@
 		     &gpio144_pins
 		     &gpio161_pins
 		     &gpio163_pins
-		     &gpio168o_pins>;
+		     &gpio168o_pins
+		     &gpio233o_pins>;
 };
