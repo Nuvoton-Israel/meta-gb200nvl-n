@@ -103,8 +103,18 @@
 			bias-disable;
 			output-high;
 		};
+		gpio86o_pins: gpio86o-pins {
+			pins = "GPIO86/R2_TXEN";
+			bias-disable;
+			output-high;
+		};
 		gpio95_pins: gpio95-pins {
 			pins = "GPIO95/nESPIRST/LPC_nLRESET";
+			bias-disable;
+			input-enable;
+		};
+		gpio127_pins: gpio127-pins {
+			pins = "GPIO127/SMB1B_SCL/CP1_GPIO0";
 			bias-disable;
 			input-enable;
 		};
@@ -112,6 +122,11 @@
 			pins = "GPIO144/PWM4";
 			bias-disable;
 			input-enable;
+		};
+		gpio155o_pins: gpio155o-pins {
+			pins = "GPIO155/MMC_nCD/MMC_nRSTLK";
+			bias-disable;
+			output-high;
 		};
 		gpio161_pins: gpio161-pins {
 			pins = "GPIO161/ESPI_nCS/LPC_nLFRAME";
@@ -125,6 +140,11 @@
 		};
 		gpio168o_pins: gpio168o-pins {
 			pins = "GPIO168/ESPI_nALERT/SERIRQ";
+			bias-disable;
+			output-high;
+		};
+		gpio187o_pins: gpio187o-pins {
+			pins = "GPO187/SPI3_nCS1_SMB14B_SDA";
 			bias-disable;
 			output-high;
 		};

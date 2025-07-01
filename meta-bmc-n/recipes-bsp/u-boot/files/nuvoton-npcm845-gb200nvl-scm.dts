@@ -190,10 +190,14 @@
 		     &gpio81ol_pins
 		     &gpio82ol_pins
 		     &gpio83o_pins
+		     &gpio86o_pins
 		     &gpio95_pins
+		     &gpio127_pins
 		     &gpio144_pins
+		     &gpio155o_pins
 		     &gpio161_pins
 		     &gpio163_pins
 		     &gpio168o_pins
+		     &gpio187o_pins
 		     &gpio233o_pins>;
 };
