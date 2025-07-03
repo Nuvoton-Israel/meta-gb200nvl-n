@@ -1,0 +1,25 @@
+From 3fdaa7e1011cc335e79b50bac207e281c49ecfb7 Mon Sep 17 00:00:00 2001
+From: Tomer Maimon <tmaimon77@gmail.com>
+Date: Wed, 19 Mar 2025 16:42:12 +0200
+Subject: [PATCH 3/3] watchdog: npcm: Add Nuvoton NPCM8xx support
+
+Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+---
+ drivers/watchdog/npcm_wdt.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/watchdog/npcm_wdt.c b/drivers/watchdog/npcm_wdt.c
+index c833c9541d9c..8cd6d028240b 100644
+--- a/drivers/watchdog/npcm_wdt.c
++++ b/drivers/watchdog/npcm_wdt.c
+@@ -383,6 +383,7 @@ static int npcm_wdt_probe(struct platform_device *pdev)
+ static const struct of_device_id npcm_wdt_match[] = {
+ 	{.compatible = "nuvoton,wpcm450-wdt"},
+ 	{.compatible = "nuvoton,npcm750-wdt"},
++	{.compatible = "nuvoton,npcm845-wdt"},
+ 	{},
+ };
+ MODULE_DEVICE_TABLE(of, npcm_wdt_match);
+-- 
+2.43.0
+

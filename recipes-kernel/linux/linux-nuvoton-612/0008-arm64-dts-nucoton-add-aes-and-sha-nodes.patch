@@ -1,0 +1,41 @@
+From 965a2bf93db84d0ad292809ec3ff0853a7a6a2ca Mon Sep 17 00:00:00 2001
+From: Tomer Maimon <tmaimon77@gmail.com>
+Date: Wed, 7 May 2025 16:18:40 +0300
+Subject: [PATCH 8/8] arm64: dts: nucoton: add aes and sha nodes
+
+Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+---
+ .../dts/nuvoton/nuvoton-common-npcm8xx.dtsi     | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi b/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi
+index 1a7b057d91c1..882b759a32fd 100644
+--- a/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi
++++ b/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi
+@@ -185,6 +185,23 @@ pcie: pcie@e1000000 {
+ 			nuvoton,sysgcr = <&gcr>;
+ 		};
+ 
++		aes: aes@f0858000 {
++			compatible = "nuvoton,npcm845-aes";
++			reg = <0x0 0xf0858000 0x0 0x1000>,
++			<0x0 0xf0851000 0x0 0x1000>;
++			status = "disabled";
++			clocks = <&clk NPCM8XX_CLK_AHB>;
++			clock-names = "clk_ahb";
++		};
++
++		sha:sha@f085a000 {
++			compatible = "nuvoton,npcm845-sha";
++			reg = <0x0 0xf085a000 0x0 0x1000>;
++			status = "disabled";
++			clocks = <&clk NPCM8XX_CLK_AHB>;
++			clock-names = "clk_ahb";
++		};
++
+ 		fiu0: spi@fb000000 {
+ 			compatible = "nuvoton,npcm845-fiu";
+ 			#address-cells = <1>;
+-- 
+2.43.0
+

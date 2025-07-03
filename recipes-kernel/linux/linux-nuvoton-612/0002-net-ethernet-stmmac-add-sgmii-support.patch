@@ -1,0 +1,80 @@
+From fb3b8b8dd65f6a17c4762d9ccca8aa021b8f96eb Mon Sep 17 00:00:00 2001
+From: Tomer Maimon <tmaimon77@gmail.com>
+Date: Tue, 19 Mar 2024 20:29:09 +0200
+Subject: [PATCH 2/5] net: ethernet: stmmac: add sgmii support
+
+Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+---
+ .../ethernet/stmicro/stmmac/dwmac-generic.c   |  1 +
+ .../ethernet/stmicro/stmmac/stmmac_platform.c | 22 +++++++++++++++++++
+ 2 files changed, 23 insertions(+)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-generic.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-generic.c
+index 598eff926815..857636280240 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-generic.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-generic.c
+@@ -61,6 +61,7 @@ static const struct of_device_id dwmac_generic_match[] = {
+ 	{ .compatible = "snps,dwmac"},
+ 	{ .compatible = "snps,dwxgmac-2.10"},
+ 	{ .compatible = "snps,dwxgmac"},
++	{ .compatible = "nuvoton,npcm-dwmac"},
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, dwmac_generic_match);
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c
+index d5a7f984427c..4f31ef97cc04 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c
+@@ -20,6 +20,9 @@
+ #include "stmmac.h"
+ #include "stmmac_platform.h"
+ 
++#define IND_AC_INDX	0x1FE
++#define SR_MII_CTRL	0x003E0000
++
+ #ifdef CONFIG_OF
+ 
+ /**
+@@ -419,6 +422,8 @@ stmmac_probe_config_dt(struct platform_device *pdev, u8 *mac)
+ 	struct device_node *np = pdev->dev.of_node;
+ 	struct plat_stmmacenet_data *plat;
+ 	struct stmmac_dma_cfg *dma_cfg;
++	void __iomem *base;
++	u16 RegValue;
+ 	int phy_mode;
+ 	void *ret;
+ 	int rc;
+@@ -511,6 +516,7 @@ stmmac_probe_config_dt(struct platform_device *pdev, u8 *mac)
+ 	if (of_device_is_compatible(np, "st,spear600-gmac") ||
+ 		of_device_is_compatible(np, "snps,dwmac-3.50a") ||
+ 		of_device_is_compatible(np, "snps,dwmac-3.70a") ||
++		of_device_is_compatible(np, "nuvoton,npcm-dwmac") ||
+ 		of_device_is_compatible(np, "snps,dwmac")) {
+ 		/* Note that the max-frame-size parameter as defined in the
+ 		 * ePAPR v1.1 spec is defined as max-frame-size, it's
+@@ -645,6 +651,22 @@ stmmac_probe_config_dt(struct platform_device *pdev, u8 *mac)
+ 		goto error_hw_init;
+ 	}
+ 
++	if (of_device_is_compatible(np, "nuvoton,npcm-dwmac")) {
++		base = devm_platform_ioremap_resource(pdev, 1);
++		if (IS_ERR(base)) {
++			dev_warn(&pdev->dev, "devm_platform_ioremap_resource failed\n");
++		}
++		iowrite16((u16)(SR_MII_CTRL >> 9), base + IND_AC_INDX);
++		RegValue = ioread16(base + 0x2);
++		RegValue = ioread16(base + 0x0);
++		RegValue |= BIT(15);
++		iowrite16(RegValue, base + 0x0);
++		while (RegValue & BIT(15))
++			RegValue = ioread16(base + 0x0);
++		RegValue &= ~(BIT(12));
++		iowrite16(RegValue, base + 0x0);
++	}
++
+ 	return plat;
+ 
+ error_hw_init:
+-- 
+2.43.0
+

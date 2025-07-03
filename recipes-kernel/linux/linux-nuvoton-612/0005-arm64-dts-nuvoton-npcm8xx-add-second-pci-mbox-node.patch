@@ -1,0 +1,56 @@
+From 54fb9e5ece208fe4dde058d9f3ec2b33c975c648 Mon Sep 17 00:00:00 2001
+From: Tomer Maimon <tmaimon77@gmail.com>
+Date: Wed, 23 Apr 2025 15:47:53 +0300
+Subject: [PATCH 5/8] arm64: dts: nuvoton: npcm8xx: add second pci mbox node
+
+Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+---
+ .../boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi     | 12 ++++++++++--
+ arch/arm64/boot/dts/nuvoton/nuvoton-npcm845-evb.dts  |  2 +-
+ 2 files changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi b/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi
+index c0b3ba691d0f..9a9c2761d3cd 100644
+--- a/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi
++++ b/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi
+@@ -240,14 +240,22 @@ fiu_tip: fiu_tip@0 {
+ 			status = "disabled";
+ 		};
+ 
+-		pcimbox: pcimbox@f0848000 {
++		pcimbox1: pcimbox@f0848000 {
+ 			compatible = "nuvoton,npcm845-pci-mbox", "nuvoton,npcm750-pci-mbox",
+ 					"simple-mfd", "syscon";
+-			reg = <0x0 0xf084C000 0x0 0x8
++			reg = <0x0 0xf084C000 0x0 0xC
+ 				0x0 0xf0848000 0x0 0x3F00>;
+ 			interrupts = <GIC_SPI 105 IRQ_TYPE_LEVEL_HIGH>;
+ 		};
+ 
++		pcimbox2: pcimbox@f0868000 {
++			compatible = "nuvoton,npcm845-pci-mbox", "nuvoton,npcm750-pci-mbox",
++					"simple-mfd", "syscon";
++			reg = <0x0 0xf086C000 0x0 0xC
++				0x0 0xf0868000 0x0 0x3F00>;
++			interrupts = <GIC_SPI 106 IRQ_TYPE_LEVEL_HIGH>;
++		};
++
+ 		vcd: vcd@f0810000 {
+ 			compatible = "nuvoton,npcm845-vcd";
+ 			reg = <0x0 0xf0810000 0x0 0x10000>;
+diff --git a/arch/arm64/boot/dts/nuvoton/nuvoton-npcm845-evb.dts b/arch/arm64/boot/dts/nuvoton/nuvoton-npcm845-evb.dts
+index b02f6c58f5e4..44fc222937c4 100644
+--- a/arch/arm64/boot/dts/nuvoton/nuvoton-npcm845-evb.dts
++++ b/arch/arm64/boot/dts/nuvoton/nuvoton-npcm845-evb.dts
+@@ -365,7 +365,7 @@ &pcie {
+ 	status = "okay";
+ };
+ 
+-&pcimbox {
++&pcimbox1 {
+ 	status = "okay";
+ };
+ 
+-- 
+2.43.0
+

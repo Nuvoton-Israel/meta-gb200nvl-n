@@ -371,9 +371,14 @@
 	status = "okay";
 };
 
-&pcimbox {
+&pcimbox1 {
 	status = "okay";
 };
+
+&pcimbox2 {
+	status = "okay";
+};
+
 
 &jtm1 {
 	status = "okay";

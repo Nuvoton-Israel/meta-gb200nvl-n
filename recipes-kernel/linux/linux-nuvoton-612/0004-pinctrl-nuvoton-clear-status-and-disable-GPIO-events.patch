@@ -1,0 +1,30 @@
+From 027a044e136cafc065f8d6642f384a94be798292 Mon Sep 17 00:00:00 2001
+From: Tomer Maimon <tmaimon77@gmail.com>
+Date: Mon, 28 Apr 2025 21:26:01 +0300
+Subject: [PATCH 4/6] pinctrl: nuvoton: clear status and disable GPIO events
+
+Clear status and disable GPIO event before initialize GPIO driver.
+
+Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+---
+ drivers/pinctrl/nuvoton/pinctrl-npcm8xx.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/pinctrl/nuvoton/pinctrl-npcm8xx.c b/drivers/pinctrl/nuvoton/pinctrl-npcm8xx.c
+index 8c2fb0b1c281..bcedb77175d5 100644
+--- a/drivers/pinctrl/nuvoton/pinctrl-npcm8xx.c
++++ b/drivers/pinctrl/nuvoton/pinctrl-npcm8xx.c
+@@ -2397,6 +2397,10 @@ static int npcm8xx_gpio_fw(struct npcm8xx_pinctrl *pctrl)
+ 		if (!pctrl->gpio_bank[id].base)
+ 			return dev_err_probe(dev, -ENXIO, "fwnode_iomap id %d failed\n", id);
+ 
++		/* Clear and disable event before GPIO init */
++		iowrite32(0x0, pctrl->gpio_bank[id].base + NPCM8XX_GP_N_EVEN);
++		iowrite32(0xFFFFFFFF, pctrl->gpio_bank[id].base + NPCM8XX_GP_N_EVST);
++
+ 		ret = bgpio_init(&pctrl->gpio_bank[id].gc, dev, 4,
+ 				 pctrl->gpio_bank[id].base + NPCM8XX_GP_N_DIN,
+ 				 pctrl->gpio_bank[id].base + NPCM8XX_GP_N_DOUT,
+-- 
+2.43.0
+

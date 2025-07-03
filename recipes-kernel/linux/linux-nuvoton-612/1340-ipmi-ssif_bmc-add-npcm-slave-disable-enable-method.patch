@@ -1,0 +1,181 @@
+From 38d5551a5eea73538a41bbb18e53d6f1287a6ffd Mon Sep 17 00:00:00 2001
+From: Eason Yang <j2anfernee@gmail.com>
+Date: Thu, 27 Mar 2025 14:12:25 +0800
+Subject: [PATCH 2/2] ipmi: ssif_bmc: add npcm slave disable/enable method
+
+Add npcm disable and enable slave method to fix busy event.
+On I2C_SLAVE_WRITE_REQUESTED event, Slave already ACK'ed on the address
+phase. But as the backend driver is busy and unable to process any
+request from Master.
+
+Remove aspeed ARA and slave disable/enable method.
+
+Signed-off-by: Eason Yang <j2anfernee@gmail.com>
+---
+ drivers/char/ipmi/ssif_bmc.c | 90 ++++++------------------------------
+ 1 file changed, 15 insertions(+), 75 deletions(-)
+
+diff --git a/drivers/char/ipmi/ssif_bmc.c b/drivers/char/ipmi/ssif_bmc.c
+index da288bc51de8..9e2982d20415 100644
+--- a/drivers/char/ipmi/ssif_bmc.c
++++ b/drivers/char/ipmi/ssif_bmc.c
+@@ -23,10 +23,10 @@
+ #include <linux/delay.h>
+ 
+ #include <linux/device.h>
+-#include <linux/aspeed-2600-ara.h>
+-#include <linux/i2c-aspeed.h>
+ 
+ #define DEVICE_NAME                             "ipmi-ssif-host"
++#define SSIF_BMC_BUSY   0
++#define SSIF_BMC_READY  1
+ #ifdef CONFIG_SEPARATE_SSIF_POSTCODES
+ #define DEVICE_NAME_POST                        "ipmi-ssif-postcodes"
+ #define POST_CODE_SIZE 9
+@@ -126,7 +126,8 @@ struct ssif_bmc_ctx {
+ 	u8                      running_post;
+ 	struct kfifo fifo_post;
+ #endif //CONFIG_SEPARATE_SSIF_POSTCODES
+-	struct ast2600_ara *ara;
++	void                    *priv;
++	void (*set_ssif_bmc_status)(struct i2c_client *, bool );
+ };
+ 
+ static ssize_t ssif_timeout_show(struct device *dev,
+@@ -150,72 +151,7 @@ static ssize_t ssif_timeout_store(struct device *dev,
+ 	return count;
+ }
+ static DEVICE_ATTR_RW(ssif_timeout);
+-
+-void disable_ast2600_slave(struct i2c_client *client)
+-{
+-	u32 addr_reg_val;
+-	struct aspeed_i2c_bus *bus;
+-
+-	if (!client)
+-		return;
+-	/*
+-	 * trick: for i2c-ast2600 driver the correct struct should be
+-	 * 'struct ast2600_i2c_bus' instead of 'struct aspeed_i2c_bus'.
+-	 * However the first three members in both structs are the same:
+-	 *
+-	 *     struct i2c_adapter		adap;
+-	 *     struct device			*dev;
+-	 *     void __iomem			*reg_base;
+-	 *
+-	 * Here we only use bus->base so it's harmless to still refer as
+-	 * 'struct aspeed_i2c_bus'.
+-	 */
+-	bus = i2c_get_adapdata(client->adapter);
+-	addr_reg_val = readl(bus->base + I2C_SLAVE_ADDR_REG);
+-	if ((addr_reg_val & 0x7F) == client->addr)
+-	{//THIS BIT CANNOT BE DISABLED WITH OLD REGISTER MODE
+-		addr_reg_val &= 0xFFFFFF7F;
+-		writel(addr_reg_val, bus->base + I2C_SLAVE_ADDR_REG);
+-	}
+-	if (((addr_reg_val >> 8) & 0x7F) == client->addr)
+-	{
+-		addr_reg_val &= 0xFFFF7FFF;
+-		writel(addr_reg_val, bus->base + I2C_SLAVE_ADDR_REG);
+-	}
+-	if (((addr_reg_val >> 16) & 0x7F) == client->addr)
+-	{
+-		addr_reg_val &= 0xFF7FFFFF;
+-		writel(addr_reg_val, bus->base + I2C_SLAVE_ADDR_REG);
+-	}
+-}
+-
+-void enable_ast2600_slave(struct i2c_client *client)
+-{
+-	u32 addr_reg_val;
+-	struct aspeed_i2c_bus *bus;
+-
+-	if (!client)
+-		return;
+-
+-	bus = i2c_get_adapdata(client->adapter);
+-	addr_reg_val = readl(bus->base + I2C_SLAVE_ADDR_REG);
+-	if ((addr_reg_val & 0x7F) == client->addr)
+-	{
+-		addr_reg_val |= 0x80;
+-		writel(addr_reg_val, bus->base + I2C_SLAVE_ADDR_REG);
+-	}
+-	else if (((addr_reg_val >> 8) & 0x7F) == client->addr)
+-	{
+-		addr_reg_val |= 0x8000;
+-		writel(addr_reg_val, bus->base + I2C_SLAVE_ADDR_REG);
+-	}
+-	else if (((addr_reg_val >> 16) & 0x7F) == client->addr)
+-	{
+-		addr_reg_val |= 0x800000;
+-		writel(addr_reg_val, bus->base + I2C_SLAVE_ADDR_REG);
+-	}
+-}
+-
++void npcm_i2c_client_slave_enable(struct i2c_client *client, bool enable);
+ 
+ static inline struct ssif_bmc_ctx *to_ssif_bmc(struct file *file)
+ {
+@@ -393,10 +329,10 @@ static ssize_t ssif_bmc_write(struct file *file, const char __user *buf, size_t
+ 	spin_unlock_irqrestore(&ssif_bmc->lock_wr, flags);
+ 
+ 	del_timer_sync(&ssif_bmc->response_timer);
+-	enable_ast2600_slave(ssif_bmc->client);
++	if (ssif_bmc->set_ssif_bmc_status)
++		ssif_bmc->set_ssif_bmc_status(ssif_bmc->client, SSIF_BMC_READY);
+ 
+ 	if (!IS_ERR(ssif_bmc->alert)) {
+-		enable_ast2600_ara(ssif_bmc->client);
+ 		//if gpio is already asserted toggle it
+ 		if (gpiod_get_value(ssif_bmc->alert))
+ 		{
+@@ -493,7 +429,8 @@ static void handle_request(struct ssif_bmc_ctx *ssif_bmc)
+ 			return;
+ 		}
+ 
+-		disable_ast2600_slave(ssif_bmc->client);
++		if (ssif_bmc->set_ssif_bmc_status)
++			ssif_bmc->set_ssif_bmc_status(ssif_bmc->client, SSIF_BMC_BUSY);
+ 		mod_timer(&ssif_bmc->response_timer, jiffies + msecs_to_jiffies(ssif_bmc->response_timeout));
+ 
+ 		memset(&ssif_bmc->response, 0, sizeof(struct ipmi_ssif_msg_header));
+@@ -969,7 +906,8 @@ static void retry_timeout(struct timer_list *t)
+ 	struct ssif_bmc_ctx *ssif_bmc = from_timer(ssif_bmc, t, response_timer);
+ 
+ 	dev_warn(&ssif_bmc->client->dev, "Userspace did not respond in time. Force enable i2c target\n");
+-	enable_ast2600_slave(ssif_bmc->client);
++	if (ssif_bmc->set_ssif_bmc_status)
++		ssif_bmc->set_ssif_bmc_status(ssif_bmc->client, SSIF_BMC_READY);
+ }
+ 
+ static int ssif_bmc_probe(struct i2c_client *client)
+@@ -1032,6 +970,10 @@ static int ssif_bmc_probe(struct i2c_client *client)
+ #endif //CONFIG_SEPARATE_SSIF_POSTCODES
+ 	ssif_bmc->client = client;
+ 	ssif_bmc->client->flags |= I2C_CLIENT_SLAVE;
++	ssif_bmc->priv = i2c_get_adapdata(client->adapter);
++	ssif_bmc->set_ssif_bmc_status = npcm_i2c_client_slave_enable;
++	if (ssif_bmc->set_ssif_bmc_status)
++		ssif_bmc->set_ssif_bmc_status(ssif_bmc->client, SSIF_BMC_READY);
+ 
+ 	timer_setup(&ssif_bmc->response_timer, retry_timeout, 0);
+ 	/* Register I2C slave */
+@@ -1043,7 +985,6 @@ static int ssif_bmc_probe(struct i2c_client *client)
+ 		misc_deregister(&ssif_bmc->miscdev_post);
+ #endif //CONFIG_SEPARATE_SSIF_POSTCODES
+ 	}
+-	ssif_bmc->ara = register_ast2600_ara(client);
+ 
+ 	if (!IS_ERR(ssif_bmc->alert))
+ 		gpiod_set_value(ssif_bmc->alert, 0);
+@@ -1055,7 +996,6 @@ static void ssif_bmc_remove(struct i2c_client *client)
+ {
+ 	struct ssif_bmc_ctx *ssif_bmc = i2c_get_clientdata(client);
+ 
+-	unregister_ast2600_ara(ssif_bmc->ara);
+ 	kfifo_free(&ssif_bmc->fifo);
+ 	i2c_slave_unregister(client);
+ 	misc_deregister(&ssif_bmc->miscdev);
+-- 
+2.34.1
+

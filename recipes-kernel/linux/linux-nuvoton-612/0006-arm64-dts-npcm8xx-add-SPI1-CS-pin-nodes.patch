@@ -1,0 +1,44 @@
+From dc92634ca98a4b9552c8817530f4b03cc4bdd92a Mon Sep 17 00:00:00 2001
+From: Tomer Maimon <tmaimon77@gmail.com>
+Date: Mon, 28 Apr 2025 16:11:35 +0300
+Subject: [PATCH 6/8] arm64: dts: npcm8xx: add SPI1 CS pin nodes
+
+Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+---
+ .../dts/nuvoton/nuvoton-common-npcm8xx.dtsi   | 20 +++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi b/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi
+index 9a9c2761d3cd..c2d9c83d8152 100644
+--- a/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi
++++ b/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi
+@@ -1790,6 +1790,26 @@ spi1_pins: spi1-pins {
+ 			groups = "spi1";
+ 			function = "spi1";
+ 		};
++		spi1cs0_pins: spi1cs0-pins {
++			groups = "spi1cs0";
++			function = "spi1cs0";
++		};
++		spi1cs1_pins: spi1cs1-pins {
++			groups = "spi1cs1";
++			function = "spi1cs1";
++		};
++		spi1cs2_pins: spi1cs2-pins {
++			groups = "spi1cs2";
++			function = "spi1cs2";
++		};
++		spi1cs3_pins: spi1cs3-pins {
++			groups = "spi1cs3";
++			function = "spi1cs3";
++		};
++		spi1d23_pins: spi1d23-pins {
++			groups = "spi1d23";
++			function = "spi1d23";
++		};
+ 		faninx_pins: faninx-pins {
+ 			groups = "faninx";
+ 			function = "faninx";
+-- 
+2.43.0
+

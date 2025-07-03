@@ -1,0 +1,52 @@
+From c744ae76abbbaf0bd34253eada3dbcb22f0142f3 Mon Sep 17 00:00:00 2001
+From: Tomer Maimon <tmaimon77@gmail.com>
+Date: Mon, 28 Apr 2025 15:24:45 +0300
+Subject: [PATCH 5/5] net: ethernet: stmmac: clearing interrupt status while
+ STMMAC_DOWN
+
+When STMMAC_DOWN is set, the stmmac IRQ handler returns without clearing
+the IRQ status, which can cause an interrupt storm.
+This patch resolves the issue by ensuring that both the interrupt status
+and the DMA status are cleared in the interrupt handler when STMMAC_DOWN
+is set.
+
+Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+---
+ drivers/net/ethernet/stmicro/stmmac/stmmac_main.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+index 27c03ed92459..a2d7e3b0808f 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+@@ -51,6 +51,7 @@
+ #include "dwxgmac2.h"
+ #include "hwif.h"
+ #include <net/ncsi.h>
++#include "dwmac_dma.h"
+ 
+ extern void __iomem *npcm_base;
+ extern bool sgmii_npcm;
+@@ -6142,10 +6143,18 @@ static irqreturn_t stmmac_interrupt(int irq, void *dev_id)
+ {
+ 	struct net_device *dev = (struct net_device *)dev_id;
+ 	struct stmmac_priv *priv = netdev_priv(dev);
++	bool xmac = priv->plat->has_gmac4 || priv->plat->has_xgmac;
+ 
+ 	/* Check if adapter is up */
+-	if (test_bit(STMMAC_DOWN, &priv->state))
++	if (test_bit(STMMAC_DOWN, &priv->state)) {
++		u32 intr_status = readl(priv->ioaddr + DMA_STATUS);
++
++		if ((priv->plat->has_gmac) || xmac)
++			readl(priv->ioaddr + GMAC_INT_STATUS);
++
++		writel((intr_status & 0x1ffff), priv->ioaddr + DMA_STATUS);
+ 		return IRQ_HANDLED;
++	}
+ 
+ 	/* Check ASP error if it isn't delivered via an individual IRQ */
+ 	if (priv->sfty_irq <= 0 && stmmac_safety_feat_interrupt(priv))
+-- 
+2.43.0
+

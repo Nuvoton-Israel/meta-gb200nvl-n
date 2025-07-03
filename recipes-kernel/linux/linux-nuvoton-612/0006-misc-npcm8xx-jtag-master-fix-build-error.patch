@@ -1,0 +1,39 @@
+From 12c7296ff55caf1bd50629c6c06964b8da4843df Mon Sep 17 00:00:00 2001
+From: Eason Yang <j2anfernee@gmail.com>
+Date: Thu, 6 Mar 2025 16:34:20 +0800
+Subject: [PATCH 6/6] misc: npcm8xx-jtag-master: fix build error
+
+Signed-off-by: Eason Yang <j2anfernee@gmail.com>
+---
+ drivers/misc/npcm8xx-jtag-master.c | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/misc/npcm8xx-jtag-master.c b/drivers/misc/npcm8xx-jtag-master.c
+index e78f3518b12d..cc7569ba7306 100644
+--- a/drivers/misc/npcm8xx-jtag-master.c
++++ b/drivers/misc/npcm8xx-jtag-master.c
+@@ -913,19 +913,17 @@ static int npcm_jtm_probe(struct platform_device *pdev)
+ 	return ret;
+ }
+ 
+-static int npcm_jtm_remove(struct platform_device *pdev)
++static void npcm_jtm_remove(struct platform_device *pdev)
+ {
+ 	struct npcm_jtm *jtag = platform_get_drvdata(pdev);
+ 
+ 	if (!jtag)
+-		return 0;
++		return;
+ 
+ 	misc_deregister(&jtag->miscdev);
+ 	kfree(jtag->miscdev.name);
+ 	kfree(jtag);
+ 	ida_simple_remove(&jtag_ida, jtag->id);
+-
+-	return 0;
+ }
+ 
+ static const struct of_device_id npcm_jtm_id[] = {
+-- 
+2.43.0
+

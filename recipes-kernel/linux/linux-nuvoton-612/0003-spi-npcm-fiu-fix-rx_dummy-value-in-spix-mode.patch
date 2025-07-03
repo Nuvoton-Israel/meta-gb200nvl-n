@@ -1,0 +1,28 @@
+From 72653491ab3359651396b7007ba702cadb719132 Mon Sep 17 00:00:00 2001
+From: Tomer Maimon <tmaimon77@gmail.com>
+Date: Wed, 7 May 2025 18:58:13 +0300
+Subject: [PATCH 3/3] spi: npcm-fiu: fix rx_dummy value in spix mode
+
+Fix rx dummy value from 0 to 2 in spix mode.
+
+Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+---
+ drivers/spi/spi-npcm-fiu.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/spi/spi-npcm-fiu.c b/drivers/spi/spi-npcm-fiu.c
+index 05c793cd2e58..21560d98f1e6 100644
+--- a/drivers/spi/spi-npcm-fiu.c
++++ b/drivers/spi/spi-npcm-fiu.c
+@@ -570,7 +570,7 @@ static void npcm_fiux_set_direct_wr(struct npcm_fiu_spi *fiu)
+ 
+ static void npcm_fiux_set_direct_rd(struct npcm_fiu_spi *fiu)
+ {
+-	u32 rx_dummy = 0;
++	u32 rx_dummy = 2;
+ 
+ 	regmap_write(fiu->regmap, NPCM_FIU_DRD_CFG,
+ 		     NPCM_FIU_DRD_16_BYTE_BURST);
+-- 
+2.43.0
+
