@@ -104,6 +104,32 @@
 		};
 	};
 
+	leds {
+		compatible = "gpio-leds";
+		uid_led {
+			gpios = <&sgpio1 27 GPIO_ACTIVE_LOW>;
+		};
+		fault_led {
+			gpios = <&sgpio1 29 GPIO_ACTIVE_LOW>;
+		};
+		power_led {
+			gpios = <&sgpio1 31 GPIO_ACTIVE_LOW>;
+		};
+
+		// Non-LEDs:
+		//   BMC_READY-O GPIO pin (not an LED) is being bound to the GPIO LED driver.
+		// Notes:
+		// * This is a workaround and leverages the GPIO LED driver to enable control of
+		//   reset tolerance and still allow the GPIO to be controlled from user space.
+		// * The standard Linux GPIO driver allows control of reset tolerance, however
+		//   does not expose user space APIs for user space control of the GPIO pin.
+		// * GPIO_TRANSITORY = reset tolerance is disabled
+		// * Any non-leds should be added below this line.
+		bmc_ready_noled {
+			gpios = <&gpio5 27 GPIO_ACTIVE_HIGH>; /* GPIO187 */
+		};
+	};
+
 	refclk: refclk-25mhz {
 		compatible = "fixed-clock";
 		clock-output-names = "ref";
@@ -1172,6 +1198,14 @@
 	pinctrl-0 = <&i3c5_pins
 		     &i3c5_scl_slew
 		     &i3c5_sda_slew>;
+};
+
+&vcd {
+	status = "okay";
+};
+
+&ece {
+	status = "okay";
 };
 
 &pinctrl {
