@@ -17,6 +17,7 @@ SRC_URI:append = " file://0005-arm64-dts-nuvoton-npcm8xx-add-second-pci-mbox-nod
 SRC_URI:append = " file://0006-arm64-dts-npcm8xx-add-SPI1-CS-pin-nodes.patch"
 SRC_URI:append = " file://0007-arm64-dts-nuvoton-add-vdm-node.patch"
 SRC_URI:append = " file://0008-arm64-dts-nucoton-add-aes-and-sha-nodes.patch"
+SRC_URI:append = " file://0009-arm64-dts-nuvoton-Add-siox-gpio-node.patch"
 
 # NPCM8XX NCSI/GMAC driver
 SRC_URI:append = " file://0001-stmmac-Add-eee-fixup-disable.patch"
@@ -96,5 +97,8 @@ SRC_URI:append = " file://0006-pinctrl-nuvoton-npcm8xx-Fix-lockdep-error-in-npcm
 
 # NPCM8XX reset driver
 SRC_URI:append = " file://0001-reset-npcm8xx-add-50-us-delay-for-usb-phy-clock-stab.patch"
+
+# GPIO bit-banging SIOX driver
+SRC_URI:append = " file://0001-siox-Add-GPIO-bit-banging-SIOX-driver.patch"
 
 SRC_URI:append = " file://1340-ipmi-ssif_bmc-add-npcm-slave-disable-enable-method.patch"

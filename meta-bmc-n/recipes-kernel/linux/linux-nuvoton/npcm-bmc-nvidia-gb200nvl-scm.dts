@@ -107,13 +107,13 @@
 	leds {
 		compatible = "gpio-leds";
 		uid_led {
-			gpios = <&sgpio1 27 GPIO_ACTIVE_LOW>;
+			gpios = <&siox_gpio 27 GPIO_ACTIVE_LOW>;
 		};
 		fault_led {
-			gpios = <&sgpio1 29 GPIO_ACTIVE_LOW>;
+			gpios = <&siox_gpio 29 GPIO_ACTIVE_LOW>;
 		};
 		power_led {
-			gpios = <&sgpio1 31 GPIO_ACTIVE_LOW>;
+			gpios = <&siox_gpio 31 GPIO_ACTIVE_LOW>;
 		};
 
 		// Non-LEDs:
@@ -183,7 +183,7 @@
 	//mellanox,multi-host;
 };
 
-&sgpio1 {
+&siox_gpio {
 	status = "okay";
 	gpio-line-names =
 	"","","","","","","","",
@@ -218,27 +218,6 @@
 	"","","","","","","","",
 	"RSVD_SGPIO_IN_CRC[0]","RSVD_SGPIO_O_CRC[7]","RSVD_SGPIO_IN_CRC[1]","RSVD_SGPIO_O_CRC[6]","RSVD_SGPIO_IN_CRC[2]","RSVD_SGPIO_O_CRC[5]","RSVD_SGPIO_IN_CRC[3]","RSVD_SGPIO_O_CRC[4]",
 	"RSVD_SGPIO_IN_CRC[4]","RSVD_SGPIO_O_CRC[3]","RSVD_SGPIO_IN_CRC[5]","RSVD_SGPIO_O_CRC[2]","RSVD_SGPIO_IN_CRC[6]","RSVD_SGPIO_O_CRC[1]","RSVD_SGPIO_IN_CRC[7]","RSVD_SGPIO_O_CRC[0]";
-};
-
-&sgpio2 {
-	status = "okay";
-	gpio-line-names =
-		"","","","","","","","",
-		"","","","","","","","",
-		"","","","","","","","",
-		"","","","","","","","",
-		"","","","","","","","",
-		"","","","","","","","",
-		"","","","","","","","",
-		"","","","","","","","",
-		"","","","","","","","",
-		"","","","","","","","",
-		"","","","","","","","",
-		"","","","","","","","",
-		"","","","","","","","",
-		"","","","","","","","",
-		"","","","","","","","",
-		"","","","","","","","";
 };
 
 &gcr {
@@ -663,7 +642,7 @@
 	clock-frequency = <400000>;
 	ssif-bmc@10 {
 		compatible = "ssif-bmc";
-		alert-gpio = <&sgpio1 39 GPIO_ACTIVE_LOW>;
+		alert-gpio = <&siox_gpio 39 GPIO_ACTIVE_LOW>;
 		pulse_width_us = <5>;
 		timeout_ms = <4995>;
 		reg = <0x10>;

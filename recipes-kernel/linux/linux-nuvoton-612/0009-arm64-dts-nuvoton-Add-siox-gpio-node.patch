@@ -1,0 +1,36 @@
+From 7f564ef121d39d593a1d055a9bad7baa01824303 Mon Sep 17 00:00:00 2001
+From: Marvin Lin <milkfafa@gmail.com>
+Date: Fri, 1 Aug 2025 09:48:22 +0800
+Subject: [PATCH] arm64: dts: nuvoton: Add siox-gpio node
+
+Signed-off-by: Marvin Lin <milkfafa@gmail.com>
+---
+ .../boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi     | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi b/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi
+index 882b759a32fd..125b0ccb67e0 100644
+--- a/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi
++++ b/arch/arm64/boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi
+@@ -609,6 +609,18 @@ tmps: tmps@188000 {
+ 				#thermal-sensor-cells = <1>;
+ 			};
+ 
++			siox_gpio: siox_gpio {
++				compatible = "eckelmann,siox-gpio";
++				din-gpios = <&gpio0 0 GPIO_ACTIVE_HIGH>;
++				dout-gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;
++				dclk-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
++				dld-gpios = <&gpio0 1 GPIO_ACTIVE_HIGH>;
++				dlb-gpios = <&gpio0 9 GPIO_ACTIVE_HIGH>;
++				gpio-controller;
++				#gpio-cells = <2>;
++				status = "disabled";
++			};
++
+ 			sgpio1: sgpio@101000 {
+ 				compatible = "nuvoton,npcm845-sgpio";
+ 				reg = <0x101000 0x200>;
+-- 
+2.34.1
+
