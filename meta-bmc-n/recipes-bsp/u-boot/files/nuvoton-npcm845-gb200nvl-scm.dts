@@ -112,6 +112,17 @@
 
 &pspi {
 	status = "okay";
+	cs-gpios = <&gpio7 9 GPIO_ACTIVE_LOW>;
+	spi-max-frequency = <1000000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pspi_pins
+		     &pspi_di_slew
+		     &pspi_d0_slew
+		     &pspi_ck_slew>;
+	tpmdev@0 {
+		compatible = "tcg,tpm_tis-spi";
+		reg = <0>;
+	};
 };
 
 &usbphy1 {

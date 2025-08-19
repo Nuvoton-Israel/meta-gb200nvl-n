@@ -153,5 +153,20 @@
 			bias-disable;
 			output-high;
 		};
+		pspi_di_slew: pspi-di-slew {
+			pins = "GPIO17/PSPI_DI/CP1_GPIO5";
+			slew-rate = <1>;
+		};
+
+		pspi_d0_slew: pspi-d0-slew {
+			pins = "GPIO18/PSPI_D0/SMB4B_SDA";
+			slew-rate = <1>;
+		};
+
+		pspi_ck_slew: pspi-ck-slew {
+			pins = "GPIO19/PSPI_CK/SMB4B_SCL";
+			slew-rate = <1>;
+		};
+
 	};
 };
