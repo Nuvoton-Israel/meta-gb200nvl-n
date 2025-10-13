@@ -1,0 +1,31 @@
+From 4d46844bc4432b12bc84390144e679ceb4a7abd1 Mon Sep 17 00:00:00 2001
+From: Joseph Liu <kwliu@nuvoton.com>
+Date: Mon, 13 Oct 2025 13:29:41 +0800
+Subject: [PATCH] change the type of rc from int to ssize_t to correctly handle
+ the return value of sendto.
+
+The sendto call returns a ssize_t, but it's being stored in an int variable rc.
+When rc is then used in the mctp_prerr log message with %zd, the type mismatch occurs.
+
+Signed-off-by: Joseph Liu <kwliu@nuvoton.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ mctp-socket.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mctp-socket.c b/mctp-socket.c
+index 9c72489..ddfe603 100644
+--- a/mctp-socket.c
++++ b/mctp-socket.c
+@@ -126,7 +126,7 @@ mctp_requester_rc_t mctp_client_send(mctp_eid_t dest_eid, int mctp_fd,
+ 				     size_t req_msg_len)
+ {
+ 	struct sockaddr_mctp addr = { 0 };
+-	int rc = 0;
++	ssize_t rc = 0;
+ 
+ 	if (mctp_fd < 0) {
+ 		mctp_prerr("%s: Failed to create socket for mctp_fd %d: %s",
+-- 
+2.43.0
+

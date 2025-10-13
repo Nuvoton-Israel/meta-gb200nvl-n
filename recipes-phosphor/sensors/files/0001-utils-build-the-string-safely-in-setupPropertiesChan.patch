@@ -1,0 +1,56 @@
+From ae4e185186f04aab38089a8384aa55e77cecf627 Mon Sep 17 00:00:00 2001
+From: Joseph Liu <kwliu@nuvoton.com>
+Date: Mon, 13 Oct 2025 14:24:00 +0800
+Subject: [PATCH] utils: build the string safely in
+ setupPropertiesChangedMatches
+
+fix error: '__builtin_memcpy' writing 88 bytes into a region of size 16 overflows the destination
+
+Instead of creating the match string in one long, complex line, build it step-by-step.
+This is safer, more readable, and often more efficient as it avoids creating multiple temporary std::string objects.
+
+Signed-off-by: Joseph Liu <kwliu@nuvoton.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ src/Utils.cpp | 16 ++++++++++++----
+ 1 file changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/src/Utils.cpp b/src/Utils.cpp
+index 8bb303d..6a20508 100644
+--- a/src/Utils.cpp
++++ b/src/Utils.cpp
+@@ -33,7 +33,7 @@
+ #include <sdbusplus/message.hpp>
+ #include <sdbusplus/message/native_types.hpp>
+ #include <tal.hpp>
+-
++
+ #include <algorithm>
+ #include <array>
+ #include <chrono>
+@@ -843,11 +843,19 @@ std::vector<std::unique_ptr<sdbusplus::bus::match_t>>
+     std::vector<std::unique_ptr<sdbusplus::bus::match_t>> matches;
+     for (const char* type : types)
+     {
++        // --- Start of Fix ---
++        // Build the match string safely piece by piece
++        std::string matchRule =
++            "type='signal',member='PropertiesChanged',path_namespace='";
++        matchRule += std::string(inventoryPath);
++        matchRule += "',arg0namespace='";
++        matchRule += configInterfaceName(type);
++        matchRule += "'";
++        // --- End of Fix ---
++
+         auto match = std::make_unique<sdbusplus::bus::match_t>(
+             static_cast<sdbusplus::bus_t&>(bus),
+-            "type='signal',member='PropertiesChanged',path_namespace='" +
+-                std::string(inventoryPath) + "',arg0namespace='" +
+-                configInterfaceName(type) + "'",
++            matchRule,  // Use the safely constructed string
+             handler);
+         matches.emplace_back(std::move(match));
+     }
+-- 
+2.43.0
+

@@ -4,6 +4,7 @@ Date: Mon, 13 Jan 2025 16:53:56 +0800
 Subject: [PATCH] novnc: add 16-bit hextile support for nuvoton ece engine
 
 Signed-off-by: Marvin Lin <milkfafa@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  package-lock.json | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
