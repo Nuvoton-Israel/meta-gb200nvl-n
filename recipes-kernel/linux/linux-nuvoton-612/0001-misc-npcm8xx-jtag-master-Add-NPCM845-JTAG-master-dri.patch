@@ -8,6 +8,7 @@ this patch adds NPCM845 JTAG master controller driver support to NPCM845
 BMC SoC.
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/misc/Kconfig               |   6 +
  drivers/misc/Makefile              |   1 +

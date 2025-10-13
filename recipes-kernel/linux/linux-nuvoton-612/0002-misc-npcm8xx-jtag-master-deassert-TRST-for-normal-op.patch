@@ -7,6 +7,7 @@ Subject: [PATCH 2/6] misc: npcm8xx-jtag-master: deassert TRST for normal
 Release JTAG reset for normal operation.
 
 Signed-off-by: Stanley Chu <yschu@nuvoton.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/misc/npcm8xx-jtag-master.c | 6 ++++++
  1 file changed, 6 insertions(+)

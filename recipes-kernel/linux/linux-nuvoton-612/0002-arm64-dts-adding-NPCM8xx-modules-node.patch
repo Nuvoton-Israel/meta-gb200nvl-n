@@ -6,6 +6,7 @@ Subject: [PATCH 2/8] arm64: dts: adding NPCM8xx modules node
 Adding new NPCM8XX module nodes
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  .../dts/nuvoton/nuvoton-common-npcm8xx.dtsi   | 1823 ++++++++++++++++-
  .../boot/dts/nuvoton/nuvoton-npcm845.dtsi     |  172 ++

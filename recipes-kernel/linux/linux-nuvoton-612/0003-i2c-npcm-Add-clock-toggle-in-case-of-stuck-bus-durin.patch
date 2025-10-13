@@ -6,6 +6,7 @@ Subject: [PATCH 3/3] i2c: npcm: Add clock toggle in case of stuck bus during
 
 Signed-off-by: Tali Perry <tali.perry1@gmail.com>
 Signed-off-by: Mohammed Elbadry <mohammed.0.elbadry@google.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/i2c/busses/i2c-npcm7xx.c | 12 ++++++++----
  1 file changed, 8 insertions(+), 4 deletions(-)

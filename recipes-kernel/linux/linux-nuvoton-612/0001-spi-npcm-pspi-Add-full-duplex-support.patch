@@ -10,6 +10,7 @@ OpenBMC-Staging-Count: 2
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
 Link: https://lore.kernel.org/r/20210113200010.71845-11-tmaimon77@gmail.com
 Signed-off-by: Joel Stanley <joel@jms.id.au>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/spi/spi-npcm-pspi.c | 75 +++++++++++++++----------------------
  1 file changed, 30 insertions(+), 45 deletions(-)

@@ -7,6 +7,7 @@ Add lock for npcm_video_start_frame to avoid starting frame capturing
 operations at the same time.
 
 Signed-off-by: Marvin Lin <milkfafa@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/media/platform/nuvoton/npcm-video.c | 27 ++++++++++++++++++---
  1 file changed, 23 insertions(+), 4 deletions(-)

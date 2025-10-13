@@ -6,6 +6,7 @@ Subject: [PATCH 4/6] pinctrl: nuvoton: clear status and disable GPIO events
 Clear status and disable GPIO event before initialize GPIO driver.
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/pinctrl/nuvoton/pinctrl-npcm8xx.c | 4 ++++
  1 file changed, 4 insertions(+)

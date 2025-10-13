@@ -11,6 +11,7 @@ nuvoton,dr_wr_en = <1 3>; enable direct writing at CS1 and CS3
 To enable direct write add CONFIG_NPCM_FIU_WR_DR_EN configuration.
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/spi/Kconfig        |  6 +++
  drivers/spi/spi-npcm-fiu.c | 75 +++++++++++++++++++++++++++++++++++++-

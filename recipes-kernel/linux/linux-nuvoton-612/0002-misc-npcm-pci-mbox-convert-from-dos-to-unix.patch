@@ -4,6 +4,7 @@ Date: Sun, 11 May 2025 09:41:53 +0300
 Subject: [PATCH 2/3] misc: npcm-pci-mbox: convert from dos to unix
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/misc/npcm7xx-pci-mbox.c | 572 ++++++++++++++++----------------
  1 file changed, 286 insertions(+), 286 deletions(-)

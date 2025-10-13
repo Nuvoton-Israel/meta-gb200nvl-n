@@ -8,6 +8,7 @@ Increase max transfer size and support running tcks
 in the JTAG_SIOCSTAT ioctl.
 
 Signed-off-by: Stanley Chu <yschu@nuvoton.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/misc/npcm8xx-jtag-master.c | 137 +++++++++++++++++------------
  1 file changed, 79 insertions(+), 58 deletions(-)

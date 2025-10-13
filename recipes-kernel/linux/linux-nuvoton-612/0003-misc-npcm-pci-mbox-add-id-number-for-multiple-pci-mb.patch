@@ -7,6 +7,7 @@ Subject: [PATCH 3/3] misc: npcm-pci-mbox: add id number for multiple pci mbox
 The NPCM8xx has two PCI mailboxes, and we should avoid using duplicate device names
 
 Signed-off-by: Joseph Liu <kwliu@nuvoton.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/misc/npcm7xx-pci-mbox.c | 52 ++++++++++++++++++++++++++-------
  1 file changed, 42 insertions(+), 10 deletions(-)

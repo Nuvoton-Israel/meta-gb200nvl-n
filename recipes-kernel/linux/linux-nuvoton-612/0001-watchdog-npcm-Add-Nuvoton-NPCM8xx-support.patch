@@ -4,6 +4,7 @@ Date: Wed, 19 Mar 2025 16:42:12 +0200
 Subject: [PATCH] watchdog: npcm: Add Nuvoton NPCM8xx support
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/watchdog/npcm_wdt.c | 1 +
  1 file changed, 1 insertion(+)

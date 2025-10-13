@@ -14,6 +14,7 @@ https://github.com/Nuvoton-Israel/linux/commit/844feba31d1f127c8370753b51c42be27
 https://github.com/Nuvoton-Israel/linux/commit/2682e5e6e3452c0bcd1aaf0e9879cf07cf6f2220
 
 Signed-off-by: Marvin Lin <milkfafa@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/media/platform/nuvoton/npcm-regs.h  |  24 +++-
  drivers/media/platform/nuvoton/npcm-video.c | 143 +++++++++++++++++---

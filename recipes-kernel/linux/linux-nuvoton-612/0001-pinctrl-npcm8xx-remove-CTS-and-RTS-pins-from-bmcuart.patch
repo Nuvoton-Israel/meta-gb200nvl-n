@@ -7,6 +7,7 @@ Remove unused BU1 CTS and BU1 RTS pins from bmcuart1 pin group, to add
 BU1 CTS and BU1 RTS pins the user should add nbu1crts pin group.
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/pinctrl/nuvoton/pinctrl-npcm8xx.c | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)

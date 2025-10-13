@@ -8,6 +8,7 @@ Add config for supporting resolution change interrupt, and disable it
 by default.
 
 Signed-off-by: Marvin Lin <milkfafa@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/media/platform/nuvoton/Kconfig      |  8 ++++++
  drivers/media/platform/nuvoton/npcm-video.c | 29 +++++++++++++--------

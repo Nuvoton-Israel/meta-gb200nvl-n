@@ -4,6 +4,7 @@ Date: Thu, 6 Mar 2025 19:18:41 +0200
 Subject: [PATCH 3/8] arm64: dts: enable new NPCM8XX modules is the NPCM8XX EVB
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  .../boot/dts/nuvoton/nuvoton-npcm845-evb.dts  | 688 +++++++++++++++++-
  .../nuvoton/nuvoton-npcm845-pincfg-evb.dtsi   |  89 +++

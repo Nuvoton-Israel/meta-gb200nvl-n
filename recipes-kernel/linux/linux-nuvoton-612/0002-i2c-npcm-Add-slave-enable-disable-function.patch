@@ -6,6 +6,7 @@ Subject: [PATCH 2/3] i2c: npcm: Add slave enable/disable function
 Add bmc slave enable/disable control function
 
 Signed-off-by: Jim Liu <JJLIU0@nuvoton.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/i2c/busses/i2c-npcm7xx.c | 13 +++++++++++++
  1 file changed, 13 insertions(+)

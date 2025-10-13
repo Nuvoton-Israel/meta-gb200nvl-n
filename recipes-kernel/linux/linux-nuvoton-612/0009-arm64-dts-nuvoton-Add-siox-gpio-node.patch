@@ -4,6 +4,7 @@ Date: Fri, 1 Aug 2025 09:48:22 +0800
 Subject: [PATCH] arm64: dts: nuvoton: Add siox-gpio node
 
 Signed-off-by: Marvin Lin <milkfafa@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  .../boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi     | 12 ++++++++++++
  1 file changed, 12 insertions(+)

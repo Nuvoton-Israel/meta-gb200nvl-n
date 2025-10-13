@@ -6,6 +6,7 @@ Subject: [PATCH 7/7] iio: adc: npcm: remove reset method flag
 Remove the flag to allow the method to work on both NPCM7xx and NPCM8xx.
 
 Signed-off-by: Jim Liu <JJLIU0@nuvoton.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/iio/adc/npcm_adc.c | 14 ++++++--------
  1 file changed, 6 insertions(+), 8 deletions(-)

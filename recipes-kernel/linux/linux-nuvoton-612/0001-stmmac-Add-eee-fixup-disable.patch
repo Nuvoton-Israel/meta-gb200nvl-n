@@ -9,6 +9,7 @@ Workaround on some boards SoCs/boards can be added to disable eee
 advertising.
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/net/ethernet/stmicro/stmmac/stmmac_main.c     | 5 ++++-
  drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c | 3 +++

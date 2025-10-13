@@ -77,6 +77,7 @@ Signed-off-by: Tyrone Ting <kfting@nuvoton.com>
 Cc: <stable@vger.kernel.org> # v5.8+
 Reviewed-by: Tali Perry <tali.perry1@gmail.com>
 Signed-off-by: Andi Shyti <andi.shyti@kernel.org>
+Upstream-Status: Pending [Not submitted to upstream yet]
 Link: https://lore.kernel.org/r/20250220040029.27596-2-kfting@nuvoton.com
 ---
  drivers/i2c/busses/i2c-npcm7xx.c | 7 +++++++

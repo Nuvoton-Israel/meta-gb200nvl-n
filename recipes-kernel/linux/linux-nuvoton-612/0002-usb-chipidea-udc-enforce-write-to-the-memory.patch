@@ -7,6 +7,7 @@ During prime endpoint function we need to read from qh.ptr->td.token
 to make sure the previous write to it indeed got into the memory.
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/usb/chipidea/udc.c | 12 +++++++++---
  1 file changed, 9 insertions(+), 3 deletions(-)

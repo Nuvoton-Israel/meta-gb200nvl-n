@@ -8,6 +8,7 @@ Increase VCD_TIMEOUT_US to prevent VCD_STAT_BUSY timeout issue when
 ECC is enabled.
 
 Signed-off-by: Marvin Lin <milkfafa@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/media/platform/nuvoton/npcm-regs.h  | 2 +-
  drivers/media/platform/nuvoton/npcm-video.c | 3 +--

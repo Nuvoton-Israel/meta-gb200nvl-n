@@ -7,6 +7,7 @@ Since the reset status register (INTCR2) should be clear, the NPCM WD save
 the reset value in the scratchpad for other WD devices use.
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/watchdog/npcm_wdt.c | 12 +++++++++---
  1 file changed, 9 insertions(+), 3 deletions(-)

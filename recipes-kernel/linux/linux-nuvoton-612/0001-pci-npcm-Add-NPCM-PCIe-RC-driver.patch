@@ -4,6 +4,7 @@ Date: Wed, 19 Mar 2025 10:05:40 +0200
 Subject: [PATCH] pci: npcm: Add NPCM PCIe-RC driver
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/pci/controller/Kconfig     |   9 +
  drivers/pci/controller/Makefile    |   1 +

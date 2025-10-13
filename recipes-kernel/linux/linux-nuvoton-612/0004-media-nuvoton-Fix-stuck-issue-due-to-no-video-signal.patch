@@ -7,6 +7,7 @@ Subject: [PATCH 04/11] media: nuvoton: Fix stuck issue due to no video signal
 Fix stuck issue due to no video signal error.
 
 Signed-off-by: Marvin Lin <milkfafa@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/media/platform/nuvoton/npcm-video.c | 14 +++++++++-----
  1 file changed, 9 insertions(+), 5 deletions(-)

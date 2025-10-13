@@ -6,6 +6,7 @@ Subject: [PATCH 1/3] misc: mbox: add npcm7xx pci mailbox driver
 Add Nuvoton BMC NPCM PCI Mailbox driver.
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/misc/Kconfig            |   7 +
  drivers/misc/Makefile           |   1 +

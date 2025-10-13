@@ -4,6 +4,7 @@ Date: Mon, 28 Apr 2025 16:11:35 +0300
 Subject: [PATCH 6/8] arm64: dts: npcm8xx: add SPI1 CS pin nodes
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  .../dts/nuvoton/nuvoton-common-npcm8xx.dtsi   | 20 +++++++++++++++++++
  1 file changed, 20 insertions(+)

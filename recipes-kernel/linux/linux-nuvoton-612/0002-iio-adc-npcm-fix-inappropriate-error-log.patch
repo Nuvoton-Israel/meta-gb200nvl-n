@@ -7,6 +7,7 @@ npcm_adc_read may return -ERESTARTSYS (interrupted by a signal),
 don't print error log since this is not an error condition.
 
 Signed-off-by: Stanley Chu <yschu@nuvoton.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/iio/adc/npcm_adc.c | 3 ++-
  1 file changed, 2 insertions(+), 1 deletion(-)

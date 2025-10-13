@@ -4,6 +4,7 @@ Date: Fri, 1 Aug 2025 09:45:49 +0800
 Subject: [PATCH] siox: Support GPIO bit-banging SIOX driver
 
 Signed-off-by: Marvin Lin <milkfafa@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/gpio/gpio-siox.c     | 168 ++++++++++++++---------------------
  drivers/siox/siox-bus-gpio.c |  76 ++++++++++------

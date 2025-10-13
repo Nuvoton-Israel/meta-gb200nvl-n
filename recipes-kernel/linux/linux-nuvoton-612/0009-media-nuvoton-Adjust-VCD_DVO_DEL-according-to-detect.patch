@@ -7,6 +7,7 @@ Subject: [PATCH 09/11] media: nuvoton: Adjust VCD_DVO_DEL according to
 Adjust VCD_DVO_DEL according to detected timings for HSYNC mode.
 
 Signed-off-by: Marvin Lin <milkfafa@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/media/platform/nuvoton/npcm-video.c | 90 +++++++++++++--------
  1 file changed, 56 insertions(+), 34 deletions(-)

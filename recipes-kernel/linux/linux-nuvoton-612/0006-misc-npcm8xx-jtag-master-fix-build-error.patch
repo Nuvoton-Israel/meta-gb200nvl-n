@@ -4,6 +4,7 @@ Date: Thu, 6 Mar 2025 16:34:20 +0800
 Subject: [PATCH 6/6] misc: npcm8xx-jtag-master: fix build error
 
 Signed-off-by: Eason Yang <j2anfernee@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/misc/npcm8xx-jtag-master.c | 6 ++----
  1 file changed, 2 insertions(+), 4 deletions(-)

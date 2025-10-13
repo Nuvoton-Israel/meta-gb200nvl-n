@@ -11,6 +11,7 @@ and the DMA status are cleared in the interrupt handler when STMMAC_DOWN
 is set.
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/net/ethernet/stmicro/stmmac/stmmac_main.c | 11 ++++++++++-
  1 file changed, 10 insertions(+), 1 deletion(-)

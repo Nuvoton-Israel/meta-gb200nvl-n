@@ -10,6 +10,7 @@ The calibration values taken are from the FUSE module.
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
 Signed-off-by: Tyrone Ting <kfting@nuvoton.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/iio/adc/npcm_adc.c | 188 ++++++++++++++++++++++++++++++++++++-
  1 file changed, 187 insertions(+), 1 deletion(-)

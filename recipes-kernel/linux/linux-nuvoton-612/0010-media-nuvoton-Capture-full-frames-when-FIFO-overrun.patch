@@ -6,6 +6,7 @@ Subject: [PATCH 10/11] media: nuvoton: Capture full frames when FIFO overrun
 Capture full frames when FIFO overrun.
 
 Signed-off-by: Marvin Lin <milkfafa@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/media/platform/nuvoton/npcm-video.c | 22 ++++++++++++++++++++-
  1 file changed, 21 insertions(+), 1 deletion(-)

@@ -4,6 +4,7 @@ Date: Tue, 4 Mar 2025 15:49:10 +0200
 Subject: [PATCH 1/8] arm64: dts: nuvoton: use the clock through the reset node
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  .../boot/dts/nuvoton/nuvoton-common-npcm8xx.dtsi     | 12 ++++--------
  1 file changed, 4 insertions(+), 8 deletions(-)

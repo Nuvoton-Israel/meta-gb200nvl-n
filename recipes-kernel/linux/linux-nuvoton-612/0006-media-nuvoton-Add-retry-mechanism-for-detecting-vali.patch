@@ -7,6 +7,7 @@ Subject: [PATCH 06/11] media: nuvoton: Add retry mechanism for detecting valid
 Add retry mechanism for detecting valid resolution.
 
 Signed-off-by: Marvin Lin <milkfafa@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/media/platform/nuvoton/npcm-video.c | 68 +++++++++++++++++++--
  1 file changed, 64 insertions(+), 4 deletions(-)

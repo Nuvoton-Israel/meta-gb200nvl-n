@@ -7,6 +7,7 @@ Modify the wait_event_interruptible_timeout function to wait_event_timeout
 to stabilize the ADC read function.
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/iio/adc/npcm_adc.c | 14 +++++++-------
  1 file changed, 7 insertions(+), 7 deletions(-)

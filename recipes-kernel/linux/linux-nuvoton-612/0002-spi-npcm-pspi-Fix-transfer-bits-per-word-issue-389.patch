@@ -12,6 +12,7 @@ Default use 8-bit data interface mode, change to use 16-bit mode
 when transfer is even length.
 
 Signed-off-by: cpchiang <cpchiang1@nuvoton.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 Co-authored-by: cpchiang <cpchiang1@nuvoton.com>
 ---
  drivers/spi/spi-npcm-pspi.c | 15 ++++++++-------

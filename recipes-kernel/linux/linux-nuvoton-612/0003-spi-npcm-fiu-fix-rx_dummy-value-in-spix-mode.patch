@@ -6,6 +6,7 @@ Subject: [PATCH 3/3] spi: npcm-fiu: fix rx_dummy value in spix mode
 Fix rx dummy value from 0 to 2 in spix mode.
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/spi/spi-npcm-fiu.c | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)

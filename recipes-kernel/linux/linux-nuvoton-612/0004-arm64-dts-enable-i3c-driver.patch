@@ -6,6 +6,7 @@ Subject: [PATCH 4/8] arm64: dts: enable i3c driver
 modify i3c compatible and clock setting.
 
 Signed-off-by: Jim Liu <JJLIU0@nuvoton.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  .../dts/nuvoton/nuvoton-common-npcm8xx.dtsi   | 36 +++++++++----------
  1 file changed, 18 insertions(+), 18 deletions(-)

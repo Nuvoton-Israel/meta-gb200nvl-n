@@ -19,6 +19,7 @@ is enabled if the NPCM_CHIPIDEA_SRAM_ALLOC definition is defined in
 the ch.h file.
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/usb/chipidea/ci.h   | 24 +++++++++-
  drivers/usb/chipidea/core.c | 21 ++++++++

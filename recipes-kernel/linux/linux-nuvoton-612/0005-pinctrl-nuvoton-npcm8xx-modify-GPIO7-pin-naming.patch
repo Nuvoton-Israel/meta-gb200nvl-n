@@ -4,6 +4,7 @@ Date: Tue, 20 May 2025 17:55:35 +0300
 Subject: [PATCH 5/6] pinctrl: nuvoton: npcm8xx: modify GPIO7 pin naming
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/pinctrl/nuvoton/pinctrl-npcm8xx.c | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)

@@ -6,6 +6,7 @@ Subject: [PATCH 08/11] media: nuvoton: Reduce non-critical logs verbosity
 Reduce non-critical logs verbosity.
 
 Signed-off-by: Marvin Lin <milkfafa@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/media/platform/nuvoton/npcm-video.c | 4 ++--
  1 file changed, 2 insertions(+), 2 deletions(-)

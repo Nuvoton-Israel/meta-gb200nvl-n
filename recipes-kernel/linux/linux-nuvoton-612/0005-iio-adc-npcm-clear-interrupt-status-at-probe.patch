@@ -4,6 +4,7 @@ Date: Thu, 7 Dec 2023 08:33:19 +0200
 Subject: [PATCH 5/7] iio: adc: npcm: clear interrupt status at probe
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/iio/adc/npcm_adc.c | 4 ++++
  1 file changed, 4 insertions(+)

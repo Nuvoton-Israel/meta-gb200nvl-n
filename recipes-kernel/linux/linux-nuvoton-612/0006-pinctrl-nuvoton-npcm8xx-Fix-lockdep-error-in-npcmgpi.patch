@@ -20,6 +20,7 @@ is executed safely, avoiding the mutex-related lockdep error while maintaining
 the required GPIO input configuration for IRQs.
 
 Signed-off-by: Tomer Maimon <tmaimon77@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/pinctrl/nuvoton/pinctrl-npcm8xx.c | 10 +++++-----
  1 file changed, 5 insertions(+), 5 deletions(-)

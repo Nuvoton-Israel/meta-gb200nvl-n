@@ -8,6 +8,7 @@ of not being able to obtain ADC values at some marginal timings.
 
 Signed-off-by: Jim Liu <JJLIU0@nuvoton.com>
 Signed-off-by: Joseph Liu <kwliu@nuvoton.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/iio/adc/npcm_adc.c | 10 ++++++++++
  1 file changed, 10 insertions(+)
