@@ -4,6 +4,8 @@
 /dts-v1/;
 #include "nuvoton-npcm845.dtsi"
 #include <dt-bindings/leds/common.h>
+#include <dt-bindings/i2c/i2c.h>
+#include <dt-bindings/leds/leds-pca955x.h>
 
 / {
 	model = "NPCM845 GB200NVL DC-SCM";
@@ -16,8 +18,6 @@
 		serial3 = &serial4;
 		ethernet0 = &gmac0;
 		ethernet2 = &gmac2;
-		ethernet3 = &gmac3;
-		mdio-gpio0 = &mdio0;
 		fiu0 = &fiu0;
 		fiu1 = &fiu1;
 		fiu3 = &fiu3;
@@ -45,42 +45,6 @@
 		i2c21 = &imux21;
 		i2c22 = &imux22;
 		i2c23 = &imux23;
-		i2c24 = &imux24;
-		i2c25 = &imux25;
-		i2c26 = &imux26;
-		i2c27 = &imux27;
-		i2c28 = &imux28;
-		i2c29 = &imux29;
-		i2c30 = &imux30;
-		i2c31 = &imux31;
-		i2c32 = &imux32;
-		i2c33 = &imux33;
-		i2c34 = &imux34;
-		i2c35 = &imux35;
-		i2c36 = &imux36;
-		i2c37 = &imux37;
-		i2c38 = &imux38;
-		i2c39 = &imux39;
-		i2c40 = &e1si2c0;
-		i2c41 = &e1si2c1;
-		i2c42 = &e1si2c2;
-		i2c43 = &e1si2c3;
-		i2c44 = &e1si2c4;
-		i2c45 = &e1si2c5;
-		i2c46 = &e1si2c6;
-		i2c47 = &e1si2c7;
-		i2c48 = &i2c17mux0;
-		i2c49 = &i2c17mux1;
-		i2c50 = &i2c17mux2;
-		i2c51 = &i2c17mux3;
-		i2c52 = &i2c25mux0;
-		i2c53 = &i2c25mux1;
-		i2c54 = &i2c25mux2;
-		i2c55 = &i2c25mux3;
-		i2c56 = &i2c29mux0;
-		i2c57 = &i2c29mux1;
-		i2c58 = &i2c29mux2;
-		i2c59 = &i2c29mux3;
 		i2c60 = &i2c1;
 		i2c61 = &i2c11;
 	};
@@ -146,17 +110,6 @@
 			reg = <0x0 0x0 0x0 0x6200000>;
 		};
 	};
-
-	mdio0: mdio@0 {
-		compatible = "virtual,mdio-gpio";
-		gpios = <&gpio1 25 GPIO_ACTIVE_HIGH>,
-			<&gpio1 26 GPIO_ACTIVE_HIGH>; 
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		phy0: ethernet-phy@1 {
-		};
-	};
 };
 
 &gmac0 {
@@ -166,7 +119,7 @@
 };
 
 &gmac2 {
-	//status = "okay";
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&r1_pins
 		     &r1oen_pins>;
@@ -174,17 +127,11 @@
 	//mellanox,multi-host;
 };
 
-&gmac3 {
-	//status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&r2_pins
-		     &r2oen_pins>;
-	use-ncsi;
-	//mellanox,multi-host;
-};
 
 &siox_gpio {
 	status = "okay";
+	interrupt-controller;
+	#interrupt-cells = <2>;
 	gpio-line-names =
 	"","","","","","","","",
 	"","","","","","","","",
@@ -257,8 +204,8 @@
 		compatible = "jedec,spi-nor";
 		#address-cells = <1>;
 		#size-cells = <1>;
-		spi-rx-bus-width = <2>;
-		spi-tx-bus-width = <2>;
+		spi-rx-bus-width = <4>;
+		spi-tx-bus-width = <4>;
 		reg = <0>;
 		spi-max-frequency = <5000000>;
 		partitions@80000000 {
@@ -271,44 +218,28 @@
 			};
 			u-boot@0 {
 				label = "u-boot";
-				reg = <0x00000000 0x003c0000>;
+				reg = <0x00000000 0x001E0000>;
 			};
-			u-boot-env@3c0000 {
+			u-boot-env@1E0000 {
 				label = "u-boot-env";
-				reg = <0x003c0000 0x00040000>;
+				reg = <0x001E0000 0x00020000>;
 			};
-			kernel@400000 {
+			kernel@200000 {
 				label = "kernel";
-				reg = <0x00400000 0x00800000>;
+				reg = <0x00200000 0x00800000>;
 			};
-			rofs@c00000 {
+			rofs@a00000 {
 				label = "rofs";
-				reg = <0x00c00000 0x03400000>;
-			};
-		};
-	};
-	spi-nor@1 {
-		compatible = "jedec,spi-nor";
-		#address-cells = <1>;
-		#size-cells = <1>;
-		spi-rx-bus-width = <2>;
-		spi-tx-bus-width = <2>;
-		reg = <1>;
-		spi-max-frequency = <5000000>;
-		partitions@88000000 {
-			compatible = "fixed-partitions";
-			#address-cells = <1>;
-			#size-cells = <1>;
-			alt-bmc@0 {
-				label = "alt-bmc";
-				reg = <0x00000000 0x04000000>;
+				reg = <0x00A00000 0x03600000>;
 			};
 		};
 	};
 };
 
 &fiu1 {
-	/*pinctrl-0 = <&spi1_pins>, <&spi1quad_pins>;*/
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi1_pins
+		&spi1d23_pins>;
 	status = "okay";
 	spi-nor@0 {
 		compatible = "jedec,spi-nor";
@@ -322,34 +253,30 @@
 			compatible = "fixed-partitions";
 			#address-cells = <1>;
 			#size-cells = <1>;
-			system1@0 {
-				label = "spi1-system1";
-				reg = <0x0 0x0>;
-			};
+            dummy@0 {
+                reg = <0x0 0x40000>;            // 256KB at offset 0
+                label = "dummy";
+            };
+            rwfs@40000 {
+                reg = <0x40000 0x1000000>;      // 16MB at offset 0x40000
+                label = "rwfs";
+            };
+            log@0x1040000 {
+                reg = <0x1040000 0x2800000>;    // 40MB at offset 0x1040000
+                label = "log";                  // Move log to EMMC, make this unused
+            };
 		};
 	};
 };
 
 &fiu3 {
-	pinctrl-0 = <&spi3_pins>, <&spi3quad_pins>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi3_pins
+		&spi3quad_pins>;
 	status = "okay";
-	spi-nor@0 {
-		compatible = "jedec,spi-nor";
-		#address-cells = <1>;
-		#size-cells = <1>;
-		spi-rx-bus-width = <2>;
-		spi-tx-bus-width = <2>;
+	spidev@0 {
+		compatible = "hgx,glacier";
 		reg = <0>;
-		spi-max-frequency = <5000000>;
-		partitions@A0000000 {
-			compatible = "fixed-partitions";
-			#address-cells = <1>;
-			#size-cells = <1>;
-			system1@0 {
-				label = "spi3-system1";
-				reg = <0x0 0x0>;
-			};
-		};
 	};
 };
 
@@ -406,7 +333,6 @@
 	status = "okay";
 };
 
-
 &pspi {
 	status = "okay";
 	cs-gpios = <&gpio7 9 GPIO_ACTIVE_LOW>; /* gpio233 */
@@ -439,6 +365,11 @@
 	status = "okay";
 	clock-frequency = <400000>;
 	multi-master;
+    mctp-controller;
+    mctp@18 {
+        compatible = "mctp-i2c-controller";
+        reg = <(0x18 | I2C_OWN_SLAVE_ADDRESS)>;
+    };
 };
 
 &i2c5 {
@@ -590,6 +521,8 @@
 
 &i2c11 {
 	status = "okay";
+	/delete-property/ pinctrl-0;
+	/delete-property/ pinctrl-names;
 	//Internal eeprom for DVO
 	slave_eeprom: slave_eeprom@40000050 {
 		compatible = "slave-24c02";
@@ -602,39 +535,11 @@
 	status = "okay";
 	clock-frequency = <100000>;
 	multi-master;
-
-	//E1.S drive slot 4-7
-	i2c-switch@77 {
-		compatible = "nxp,pca9546";
-		#address-cells = <1>;
-		#size-cells = <0>;
-		reg = <0x77>;
-		i2c-mux-idle-disconnect;
-
-		e1si2c4: i2c@0 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <0>;
-		};
-
-		e1si2c5: i2c@1 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <1>;
-		};
-
-		e1si2c6: i2c@2 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <2>;
-		};
-
-		e1si2c7: i2c@3 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <3>;
-		};
-	};
+    mctp-controller;
+    mctp@18 {
+        compatible = "mctp-i2c-controller";
+        reg = <(0x18 | I2C_OWN_SLAVE_ADDRESS)>;
+    };
 };
 
 &i2c14 {
@@ -659,45 +564,23 @@
 	status = "okay";
 	clock-frequency = <100000>;
 	multi-master;
-
-	//E1.S drive slot 0-3
-	i2c-switch@77 {
-		compatible = "nxp,pca9546";
-		#address-cells = <1>;
-		#size-cells = <0>;
-		reg = <0x77>;
-		i2c-mux-idle-disconnect;
-
-		e1si2c0: i2c@0 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <0>;
-		};
-
-		e1si2c1: i2c@1 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <1>;
-		};
-
-		e1si2c2: i2c@2 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <2>;
-		};
-
-		e1si2c3: i2c@3 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <3>;
-		};
-	};
+    mctp-controller;
+    mctp@18 {
+        compatible = "mctp-i2c-controller";
+        reg = <(0x18 | I2C_OWN_SLAVE_ADDRESS)>;
+    };
 };
 
 &i2c20 {
 	status = "okay";
 	clock-frequency = <400000>;
 	multi-master;
+};
+
+&i2c23 {
+	status = "okay";
+	clock-frequency = <400000>;
+	pinctrl-0 = <&smb23b_pins>;
 };
 
 &i2c24 {
@@ -741,346 +624,101 @@
 &i2c25 {
 	status = "okay";
 	clock-frequency = <400000>;
-	multi-master;
 	pinctrl-0 = <&smb9_pins>;
+	mctp-controller;
+	multi-master;
+    mctp@18 {
+        compatible = "mctp-i2c-controller";
+        reg = <(0x18 | I2C_OWN_SLAVE_ADDRESS)>;
+    };
+    i2c-switch@71 {
+        compatible = "nxp,pca9546";
+        #address-cells = <1>;
+        #size-cells = <0>;
+        reg = <0x71>;
 
-	i2c-switch@71 {
-		compatible = "nxp,pca9546";
-		#address-cells = <1>;
-		#size-cells = <0>;
-		reg = <0x71>;
-		i2c-mux-idle-disconnect;
+        imux16: i2c@0 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <0>;
+            mctp-controller;
+        };
 
-		imux16: i2c@0 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <0>;
-		};
+        imux17: i2c@1 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <1>;
+        };
 
-		imux17: i2c@1 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <1>;
+        imux18: i2c@2 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <2>;
+            mctp-controller;
+        };
 
-			i2c-switch@74 {
-				compatible = "nxp,pca9546";
-				#address-cells = <1>;
-				#size-cells = <0>;
-				reg = <0x74>;
-				i2c-mux-idle-disconnect;
+        imux19: i2c@3 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <3>;
+        };
+    };
 
-				i2c17mux0: i2c@0 {
-					#address-cells = <1>;
-					#size-cells = <0>;
-					reg = <0>;
-				};
+    i2c-switch@72 {
+        compatible = "nxp,pca9546";
+        #address-cells = <1>;
+        #size-cells = <0>;
+        reg = <0x72>;
 
-				i2c17mux1: i2c@1 {
-					#address-cells = <1>;
-					#size-cells = <0>;
-					reg = <1>;
-				};
+        imux20: i2c@0 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <0>;
+        };
 
-				i2c17mux2: i2c@2 {
-					#address-cells = <1>;
-					#size-cells = <0>;
-					reg = <2>;
-				};
+        imux21: i2c@1 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <1>;
+            pca9555@20 {
+                compatible = "nxp,pca9555";
+                reg = <0x20>;
+                gpio-controller;
+                #gpio-cells = <2>;
+                #address-cells = <1>;
+                #size-cells = <0>;
+                gpio-line-names =
+                    "RST_CX_0_L-O",
+                    "RST_CX_1_L-O",
+                    "CX0_SSD0_PRSNT_L-I",
+                    "CX1_SSD1_PRSNT_L-I",
+                    "CX_BOOT_CMPLT_CX0-I",
+                    "CX_BOOT_CMPLT_CX1-I",
+                    "CX_TWARN_CX0_L-I",
+                    "CX_TWARN_CX1_L-I",
+                    "CX_OVT_SHDN_CX0-I",
+                    "CX_OVT_SHDN_CX1-I",
+                    "FNP_L_CX0-O",
+                    "FNP_L_CX1-O",
+                    "",
+                    "MCU_GPIO-I",
+                    "MCU_RST_N-O",
+                    "MCU_RECOVERY_N-O";
+            };
+        };
 
-				i2c17mux3: i2c@3 {
-					#address-cells = <1>;
-					#size-cells = <0>;
-					reg = <3>;
-				};
-			};
-		};
+        imux22: i2c@2 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <2>;
+        };
 
-		imux18: i2c@2 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <2>;
-		};
-
-		imux19: i2c@3 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <3>;
-		};
-	};
-
-	i2c-switch@72 {
-		compatible = "nxp,pca9546";
-		#address-cells = <1>;
-		#size-cells = <0>;
-		reg = <0x72>;
-		i2c-mux-idle-disconnect;
-
-		imux20: i2c@0 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <0>;
-		};
-
-		imux21: i2c@1 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <1>;
-			pca9555@20 {
-				compatible = "nxp,pca9555";
-				reg = <0x20>;
-				gpio-controller;
-				#gpio-cells = <2>;
-				#address-cells = <1>;
-				#size-cells = <0>;
-				gpio-line-names =
-					"RST_CX_0_L-O",
-					"RST_CX_1_L-O",
-					"CX0_SSD0_PRSNT_L-I",
-					"CX1_SSD1_PRSNT_L-I",
-					"CX_BOOT_CMPLT_CX0-I",
-					"CX_BOOT_CMPLT_CX1-I",
-					"CX_TWARN_CX0_L-I",
-					"CX_TWARN_CX1_L-I",
-					"CX_OVT_SHDN_CX0-I",
-					"CX_OVT_SHDN_CX1-I",
-					"FNP_L_CX0-O",
-					"FNP_L_CX1-O",
-					"",
-					"MCU_GPIO-I",
-					"MCU_RST_N-O",
-					"MCU_RECOVERY_N-O";
-			};
-		};
-
-		imux22: i2c@2 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <2>;
-		};
-
-		imux23: i2c@3 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <3>;
-		};
-	};
-
-	i2c-switch@73 {
-		compatible = "nxp,pca9546";
-		#address-cells = <1>;
-		#size-cells = <0>;
-		reg = <0x73>;
-		i2c-mux-idle-disconnect;
-
-		imux24: i2c@0 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <0>;
-		};
-
-		imux25: i2c@1 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <1>;
-
-			i2c-switch@70 {
-				compatible = "nxp,pca9546";
-				#address-cells = <1>;
-				#size-cells = <0>;
-				reg = <0x70>;
-				i2c-mux-idle-disconnect;
-
-				i2c25mux0: i2c@0 {
-					#address-cells = <1>;
-					#size-cells = <0>;
-					reg = <0>;
-				};
-
-				i2c25mux1: i2c@1 {
-					#address-cells = <1>;
-					#size-cells = <0>;
-					reg = <1>;
-				};
-
-				i2c25mux2: i2c@2 {
-					#address-cells = <1>;
-					#size-cells = <0>;
-					reg = <2>;
-				};
-
-				i2c25mux3: i2c@3 {
-					#address-cells = <1>;
-					#size-cells = <0>;
-					reg = <3>;
-				};
-			};
-		};
-
-		imux26: i2c@2 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <2>;
-		};
-
-		imux27: i2c@3 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <3>;
-		};
-	};
-
-	i2c-switch@75 {
-		compatible = "nxp,pca9546";
-		#address-cells = <1>;
-		#size-cells = <0>;
-		reg = <0x75>;
-		i2c-mux-idle-disconnect;
-
-		imux28: i2c@0 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <0>;
-		};
-
-		imux29: i2c@1 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <1>;
-
-			i2c-switch@74 {
-				compatible = "nxp,pca9546";
-				#address-cells = <1>;
-				#size-cells = <0>;
-				reg = <0x74>;
-				i2c-mux-idle-disconnect;
-
-				i2c29mux0: i2c@0 {
-					#address-cells = <1>;
-					#size-cells = <0>;
-					reg = <0>;
-				};
-
-				i2c29mux1: i2c@1 {
-					#address-cells = <1>;
-					#size-cells = <0>;
-					reg = <1>;
-				};
-
-				i2c29mux2: i2c@2 {
-					#address-cells = <1>;
-					#size-cells = <0>;
-					reg = <2>;
-				};
-
-				i2c29mux3: i2c@3 {
-					#address-cells = <1>;
-					#size-cells = <0>;
-					reg = <3>;
-				};
-			};
-		};
-
-		imux30: i2c@2 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <2>;
-		};
-
-		imux31: i2c@3 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <3>;
-		};
-	};
-
-	i2c-switch@76 {
-		compatible = "nxp,pca9546";
-		#address-cells = <1>;
-		#size-cells = <0>;
-		reg = <0x76>;
-		i2c-mux-idle-disconnect;
-
-		imux32: i2c@0 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <0>;
-		};
-
-		imux33: i2c@1 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <1>;
-			pca9555@21 {
-				compatible = "nxp,pca9555";
-				reg = <0x21>;
-				gpio-controller;
-				#gpio-cells = <2>;
-				#address-cells = <1>;
-				#size-cells = <0>;
-				gpio-line-names =
-					"SEC_RST_CX_0_L-O",
-					"SEC_RST_CX_1_L-O",
-					"SEC_CX0_SSD0_PRSNT_L-I",
-					"SEC_CX1_SSD1_PRSNT_L-I",
-					"SEC_CX_BOOT_CMPLT_CX0-I",
-					"SEC_CX_BOOT_CMPLT_CX1-I",
-					"SEC_CX_TWARN_CX0_L-I",
-					"SEC_CX_TWARN_CX1_L-I",
-					"SEC_CX_OVT_SHDN_CX0-I",
-					"SEC_CX_OVT_SHDN_CX1-I",
-					"SEC_FNP_L_CX0-O",
-					"SEC_FNP_L_CX1-O",
-					"",
-					"SEC_MCU_GPIO-I",
-					"SEC_MCU_RST_N-O",
-					"SEC_MCU_RECOVERY_N-O";
-			};
-		};
-
-		imux34: i2c@2 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <2>;
-		};
-
-		imux35: i2c@3 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <3>;
-		};
-	};
-
-	i2c-switch@77 {
-		compatible = "nxp,pca9546";
-		#address-cells = <1>;
-		#size-cells = <0>;
-		reg = <0x77>;
-		i2c-mux-idle-disconnect;
-
-		imux36: i2c@0 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <0>;
-		};
-
-		imux37: i2c@1 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <1>;
-		};
-
-		imux38: i2c@2 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <2>;
-		};
-
-		imux39: i2c@3 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <3>;
-		};
-	};
+        imux23: i2c@3 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <3>;
+        };
+    };
 };
 
 &i2c26 {
@@ -1131,53 +769,6 @@
 	};
 };
 
-&i3c0 {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&i3c0_pins
-		     &i3c0_scl_slew
-		     &i3c0_sda_slew>;
-};
-
-&i3c1 {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&i3c1_pins
-		     &i3c1_scl_slew
-		     &i3c1_sda_slew>;
-};
-
-&i3c2 {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&i3c2_pins
-		     &i3c2_scl_slew
-		     &i3c2_sda_slew>;
-};
-
-&i3c3 {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&i3c3_pins
-		     &i3c3_scl_slew
-		     &i3c3_sda_slew>;
-};
-
-&i3c4 {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&i3c4_pins
-		     &i3c4_scl_slew
-		     &i3c4_sda_slew>;
-};
-
-&i3c5 {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&i3c5_pins
-		     &i3c5_scl_slew
-		     &i3c5_sda_slew>;
-};
 
 &vcd {
 	status = "okay";
@@ -1310,63 +901,9 @@
 		output-low;
 	};
 
-	i3c0_scl_slew: i3c0scl-slew {
-		pins = "GPIO240/I3C0_SCL";
-		slew-rate = <1>;
-	};
-
-	i3c0_sda_slew: i3c0sda-slew {
-		pins = "GPIO241/I3C0_SDA";
-		slew-rate = <1>;
-	};
-
-	i3c1_scl_slew: i3c1scl-slew {
-		pins = "GPIO242/I3C1_SCL";
-		slew-rate = <1>;
-	};
-
-	i3c1_sda_slew: i3c1sda-slew {
-		pins = "GPIO243/I3C1_SDA";
-		slew-rate = <1>;
-	};
-
-	i3c2_scl_slew: i3c2scl-slew {
-		pins = "GPIO244/I3C2_SCL";
-		slew-rate = <1>;
-	};
-
-	i3c2_sda_slew: i3c2sda-slew {
-		pins = "GPIO245/I3C2_SDA";
-		slew-rate = <1>;
-	};
-
-	i3c3_scl_slew: i3c3scl-slew {
-		pins = "GPIO246/I3C3_SCL";
-		slew-rate = <1>;
-	};
-
-	i3c3_sda_slew: i3c3sda-slew {
-		pins = "GPIO247/I3C3_SDA";
-		slew-rate = <1>;
-	};
-
-	i3c4_scl_slew: i3c4scl-slew {
-		pins = "GPIO33/I3C4_SCL";
-		slew-rate = <1>;
-	};
-
-	i3c4_sda_slew: i3c4sda-slew {
-		pins = "GPIO34/I3C4_SDA";
-		slew-rate = <1>;
-	};
-
-	i3c5_scl_slew: i3c5scl-slew {
-		pins = "GPIO106/I3C5_SCL";
-		slew-rate = <1>;
-	};
-
-	i3c5_sda_slew: i3c5sda-slew {
-		pins = "GPIO107/I3C5_SDA";
-		slew-rate = <1>;
+	
+	smb23b_pins: smb23b-pins {
+		groups = "smb23b";
+		function = "smb23b";
 	};
 };

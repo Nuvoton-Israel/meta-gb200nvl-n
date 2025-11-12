@@ -1,0 +1,134 @@
+Upstream-Status: Pending [Not submitted to upstream yet]
+
+diff --git a/drivers/spi/spi-npcm-fiu.c b/drivers/spi/spi-npcm-fiu.c
+index 21560d98f1e6..b9eeef358f03 100644
+--- a/drivers/spi/spi-npcm-fiu.c
++++ b/drivers/spi/spi-npcm-fiu.c
+@@ -478,6 +478,118 @@ static int npcm_fiu_uma_write(struct spi_mem *mem,
+ 					UMA_MICRO_SEC_TIMEOUT);
+ }
+ 
++static int npcm_fiu_spi_write(struct npcm_fiu_spi *fiu, const u8 *data,
++			      u32 size, u8 mode)
++{
++	u32 cfg = size << NPCM_FIU_UMA_CFG_WDATSIZ_SHIFT;
++	u32 data_reg[4] = {0};
++	u32 val;
++	int i;
++
++	if (mode == SPI_NBITS_DUAL)
++		cfg |= 1 << 4;
++	else if (mode == SPI_NBITS_QUAD)
++		cfg |= 2 << 4;
++	memcpy(data_reg, data, size);
++	for (i = 0; i < DIV_ROUND_UP(size, 4); i++)
++		regmap_write(fiu->regmap, NPCM_FIU_UMA_DW0 + (i * 4),
++			     data_reg[i]);
++
++	dev_dbg(fiu->dev, "fiu:write mode=%d cfg=0x%x\n", mode, cfg);
++	regmap_write(fiu->regmap, NPCM_FIU_UMA_CFG, cfg);
++	regmap_write_bits(fiu->regmap, NPCM_FIU_UMA_CTS,
++			  NPCM_FIU_UMA_CTS_EXEC_DONE,
++			  NPCM_FIU_UMA_CTS_EXEC_DONE);
++
++	return regmap_read_poll_timeout(fiu->regmap, NPCM_FIU_UMA_CTS, val,
++				       (!(val & NPCM_FIU_UMA_CTS_EXEC_DONE)), 0,
++					UMA_MICRO_SEC_TIMEOUT);
++}
++
++static int npcm_fiu_spi_read(struct npcm_fiu_spi *fiu, u8 *data, u32 size, u8 mode)
++{
++	u32 cfg = size << NPCM_FIU_UMA_CFG_RDATSIZ_SHIFT;
++	u32 data_reg[4];
++	u32 val;
++	int i, ret;
++
++	if (mode == SPI_NBITS_DUAL)
++		cfg |= 1 << 8;
++	else if (mode == SPI_NBITS_QUAD)
++		cfg |= 2 << 8;
++	dev_dbg(fiu->dev, "fiu:read mode=%d cfg=0x%x\n", mode, cfg);
++	regmap_write(fiu->regmap, NPCM_FIU_UMA_CFG, cfg);
++	regmap_write_bits(fiu->regmap, NPCM_FIU_UMA_CTS,
++			  NPCM_FIU_UMA_CTS_EXEC_DONE,
++			  NPCM_FIU_UMA_CTS_EXEC_DONE);
++	ret = regmap_read_poll_timeout(fiu->regmap, NPCM_FIU_UMA_CTS, val,
++				       (!(val & NPCM_FIU_UMA_CTS_EXEC_DONE)), 0,
++				       UMA_MICRO_SEC_TIMEOUT);
++	if (ret)
++		return ret;
++
++	for (i = 0; i < DIV_ROUND_UP(size, 4); i++) {
++		regmap_read(fiu->regmap, NPCM_FIU_UMA_DR0 + (i * 4),
++			    &data_reg[i]);
++
++	}
++	memcpy(data, data_reg, size);
++
++	return ret;
++}
++
++static int npcm_fiu_transfer_one(struct spi_controller *master,
++				 struct spi_device *spi,
++				 struct spi_transfer *t)
++{
++	struct npcm_fiu_spi *fiu = spi_controller_get_devdata(master);
++	const u8 *tx = t->tx_buf;
++	u8 *rx = t->rx_buf;
++	u32 data_bytes = t->len;
++	u32 len;
++	int ret = 0;
++
++	if (!data_bytes)
++		return 0;
++
++	while (data_bytes) {
++		len = (data_bytes > CHUNK_SIZE) ? CHUNK_SIZE : data_bytes;
++		if (tx) {
++			ret = npcm_fiu_spi_write(fiu, tx, len, t->tx_nbits);
++			if (ret)
++				break;
++			tx += len;
++		}
++		if (rx) {
++			ret = npcm_fiu_spi_read(fiu, rx, len, t->rx_nbits);
++			if (ret)
++				break;
++			rx += len;
++		}
++		data_bytes -= len;
++	}
++
++	return ret;
++}
++
++static void npcm_fiu_set_cs(struct spi_device *spi, bool enable)
++{
++	struct npcm_fiu_spi *fiu = spi_controller_get_devdata(spi->controller);
++
++	if (!enable) {
++		regmap_update_bits(fiu->regmap, NPCM_FIU_UMA_CTS,
++				   NPCM_FIU_UMA_CTS_DEV_NUM,
++				   (spi->chip_select[0] <<
++				    NPCM_FIU_UMA_CTS_DEV_NUM_SHIFT));
++		regmap_update_bits(fiu->regmap, NPCM_FIU_UMA_CTS,
++				   NPCM_FIU_UMA_CTS_SW_CS, 0);
++	} else {
++		regmap_update_bits(fiu->regmap, NPCM_FIU_UMA_CTS,
++				   NPCM_FIU_UMA_CTS_SW_CS, NPCM_FIU_UMA_CTS_SW_CS);
++	}
++
++}
++
+ static int npcm_fiu_manualwrite(struct spi_mem *mem,
+ 				const struct spi_mem_op *op)
+ {
+@@ -828,6 +940,8 @@ static int npcm_fiu_probe(struct platform_device *pdev)
+ 	ctrl->mem_ops = &npcm_fiu_mem_ops;
+ 	ctrl->num_chipselect = fiu->info->max_cs;
+ 	ctrl->dev.of_node = dev->of_node;
++	ctrl->transfer_one = npcm_fiu_transfer_one;
++	ctrl->set_cs = npcm_fiu_set_cs;
+ 
+ 	return devm_spi_register_controller(dev, ctrl);
+ }

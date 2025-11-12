@@ -1,12 +1,16 @@
-# Override some values in linux-aspeed.inc and linux-aspeed_git.bb
-# with specifics of our Git repo, branch names, and Linux version
-#
-LINUX_VERSION = "6.12.9"
-SRCREV="90799086d629b96403e5d80e7d53541fc96351dc"
+LINUX_VERSION = "6.12.41"
+SRCREV = "69083b35ffc25e87691a0d45e2c9657d85c1e4e9"
 KSRC = "git://github.com/NVIDIA/linux;protocol=https;branch=develop-6.12"
+
 # From 5.10+ the COPYING file changed
 LIC_FILES_CHKSUM = "file://COPYING;md5=6bc538ed5bd9a7fc9398086aedcd7e46"
-FILESEXTRAPATHS:prepend := "${THISDIR}/linux-nuvoton-612:"
+FILESEXTRAPATHS:prepend := "${THISDIR}/linux-nuvoton:"
+
+# Copy from aspeed bbappend
+SRC_URI:append = " file://enable-cifs-protocol.cfg"
+SRC_URI:append = " file://nxp-rtc-PCFPCF85053A.patch"
+SRC_URI:append = " file://0001-Update-shunt-resistor-micro-ohms-for-LTC4286-driver.patch"
+
 
 # NPCM8XX common dts
 SRC_URI:append = " file://0001-arm64-dts-nuvoton-use-the-clock-through-the-reset-no.patch"
@@ -30,6 +34,7 @@ SRC_URI:append = " file://0005-net-ethernet-stmmac-clearing-interrupt-status-whi
 SRC_URI:append = " file://0001-spi-npcm-fiu-add-dual-and-quad-write-support.patch"
 SRC_URI:append = " file://0002-spi-npcm-fiu-enable-direct-write-support.patch"
 SRC_URI:append = " file://0003-spi-npcm-fiu-fix-rx_dummy-value-in-spix-mode.patch"
+SRC_URI:append = " file://0004-fiu_support_generic_spi_transfer.patch"
 
 # NPCM8XX PSPI driver
 SRC_URI:append = " file://0001-spi-npcm-pspi-Add-full-duplex-support.patch"
@@ -40,9 +45,18 @@ SRC_URI:append = " file://0001-usb-chipidea-add-SRAM-allocation-support.patch"
 SRC_URI:append = " file://0002-usb-chipidea-udc-enforce-write-to-the-memory.patch"
 
 # NPCM8XX i2c driver
-SRC_URI:append = " file://0001-i2c-npcm-disable-interrupt-enable-bit-before-devm_re.patch"
-SRC_URI:append = " file://0002-i2c-npcm-Add-slave-enable-disable-function.patch"
-SRC_URI:append = " file://0003-i2c-npcm-Add-clock-toggle-in-case-of-stuck-bus-durin.patch"
+SRC_URI:append = " file://0001-i2c-npcm-correct-the-read-write-operation-procedure.patch"
+SRC_URI:append = " file://0002-i2c-npcm-use-a-software-flag-to-indicate-a-BER-condi.patch"
+SRC_URI:append = " file://0003-i2c-Switch-back-to-struct-platform_driver-remove.patch"
+SRC_URI:append = " file://0004-i2c-npcm-Modify-timeout-evaluation-mechanism.patch"
+SRC_URI:append = " file://0005-i2c-npcm-Assign-client-address-earlier-for-i2c_recov.patch"
+SRC_URI:append = " file://0006-i2c-npcm-use-i2c-frequency-table.patch"
+SRC_URI:append = " file://0007-i2c-npcm-Enable-slave-in-eob-interrupt.patch"
+SRC_URI:append = " file://0008-i2c-npcm-Add-slave-enable-disable-function.patch"
+SRC_URI:append = " file://0009-i2c-npcm-Add-clock-toggle-in-case-of-stuck-bus-durin.patch"
+SRC_URI:append = " file://0010-i2c-npcm-clear-the-FIFO-in-master-ber-case.patch"
+SRC_URI:append = " file://0011-i2c-npcm-unexpected-SLVRSTR-IRQ-in-master-mode.patch"
+SRC_URI:append = " file://0012-i2c-npcm-multi-master.patch"
 
 # NPCM8XX PCEI driver
 SRC_URI:append = " file://0001-pci-npcm-Add-NPCM-PCIe-RC-driver.patch"
@@ -65,15 +79,6 @@ SRC_URI:append = " file://0001-watchdog-npcm-Add-DT-restart-priority-and-reset-t
 SRC_URI:append = " file://0002-watchdog-npcm-save-reset-status.patch"
 SRC_URI:append = " file://0003-watchdog-npcm-Add-Nuvoton-NPCM8xx-support.patch"
 
-# NPCM8XX ADC driver
-SRC_URI:append = " file://0001-iio-adc-Add-calibration-support-to-npcm-ADC.patch"
-SRC_URI:append = " file://0002-iio-adc-npcm-fix-inappropriate-error-log.patch"
-SRC_URI:append = " file://0003-iio-adc-npcm-cover-more-module-reset-cases.patch"
-SRC_URI:append = " file://0004-iio-adc-modify-wake-up-function.patch"
-SRC_URI:append = " file://0005-iio-adc-npcm-clear-interrupt-status-at-probe.patch"
-SRC_URI:append = " file://0006-iio-adc-npcm-add-reset-method-to-fix-get-value-faile.patch"
-SRC_URI:append = " file://0007-iio-adc-npcm-remove-reset-method-flag.patch"
-
 # NPCM8XX media driver
 SRC_URI:append = " file://0001-media-nuvoton-Sync-patches-from-NPCM-6.1-OpenBMC-bra.patch"
 SRC_URI:append = " file://0002-media-nuvoton-Add-config-for-supporting-resolution-c.patch"
@@ -94,11 +99,18 @@ SRC_URI:append = " file://0003-pinctrl-nuvoton-npcm8xx-add-rgmii2-drive-strength
 SRC_URI:append = " file://0004-pinctrl-nuvoton-clear-status-and-disable-GPIO-events.patch"
 SRC_URI:append = " file://0005-pinctrl-nuvoton-npcm8xx-modify-GPIO7-pin-naming.patch"
 SRC_URI:append = " file://0006-pinctrl-nuvoton-npcm8xx-Fix-lockdep-error-in-npcmgpi.patch"
+SRC_URI:append = " file://0007-pinctrl-nuvoton-npcm8xx-add-irq_request_resources-su.patch"
+SRC_URI:append = " file://0008-pinctrl-nuvoton-npcm8xx-modify-pin-configuration-fla.patch"
 
 # NPCM8XX reset driver
 SRC_URI:append = " file://0001-reset-npcm8xx-add-50-us-delay-for-usb-phy-clock-stab.patch"
+SRC_URI:append = " file://0002-reset-npcm-reset-USB-hub.patch"
+
+# ipmission SSIF_bmc driver
+SRC_URI:append = " file://1340-ipmi-ssif_bmc-add-npcm-slave-disable-enable-method.patch"
+
+# NTC3018Y intrusion detection and timestamp rework
+SRC_URI:append = " file://0001-rtc-nuvoton-Add-intrusion-detection-and-timestamp-re.patch"
 
 # GPIO bit-banging SIOX driver
 SRC_URI:append = " file://0001-siox-Add-GPIO-bit-banging-SIOX-driver.patch"
-
-SRC_URI:append = " file://1340-ipmi-ssif_bmc-add-npcm-slave-disable-enable-method.patch"

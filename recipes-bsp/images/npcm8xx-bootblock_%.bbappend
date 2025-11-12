@@ -1,3 +1,3 @@
-# Bootblock 0.5.4
+# Bootblock 0.5.6
 
-SRCREV = "fd591f0b10a3d1ebc5eaf592f43eb8ce90ca7ae2"
+SRCREV = "4478e7a4d36afd33c7aab6b139e386a1dd5f5a2d"

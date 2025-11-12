@@ -11,6 +11,7 @@ request from Master.
 Remove aspeed ARA and slave disable/enable method.
 
 Signed-off-by: Eason Yang <j2anfernee@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
 ---
  drivers/char/ipmi/ssif_bmc.c | 90 ++++++------------------------------
  1 file changed, 15 insertions(+), 75 deletions(-)

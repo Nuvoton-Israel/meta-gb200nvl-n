@@ -1,0 +1,7 @@
+[Unit]
+Description=dp hotplug detected
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/dp_hotplug.sh
+SyslogIdentifier=dp_hotplug

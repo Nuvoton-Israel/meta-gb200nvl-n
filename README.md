@@ -19,23 +19,13 @@ git clone git@github.com:Nuvoton-Israel/meta-gb200nvl-n.git meta-nvidia/meta-pri
 
 ```sh
 cd ~/openbmc # Or the path to your top-level openbmc directory
-git reset --hard fa1c3b95cada90ea4fc8ad22b9bf6bd24b4dc91c
+git reset --hard 63fdc97c652fe153712084a251f2042801ad5f3f
 git am ./meta-nvidia/meta-prime/meta-graceblackwell/meta-gb200nvl-n/0001-fix-meta-arm-and-meta-nuvoton-break.patch
 ```
 
 ## npcm8xx dc-scm target
 ```ruby
 . setup gb200nvl-scm-n
-```
-
-## npcm8xx evb for bmc target
-```ruby
-. setup gb200nvl-bmc-n
-```
-
-## npcm8xx evb for hmc target
-```ruby
-. setup gb200nvl-hmc-n
 ```
 
 ## Build
@@ -46,20 +36,15 @@ bitbake obmc-phosphor-image
 
 * Flash full openbmc image
 ```ruby
-setenv ethact gmac2
+dhcp
 tftp 10000000 image-bmc
 sf probe 0:0
 sf update 0x10000000 0x0 ${filesize}
 ```
 ## First Use
-### Under u-boot, erase the bottom half of the flash for rwfs and log if the flash size is 128MB
-```ruby
-sf probe 0:0
-sf erase 0x04000000 0x04000000
-```
 ### Under u-boot, erase the emmc to create a new partition table in the openbmc
 ```ruby
-mmc erase 0 0x1000000
+mmc erase 0 0x2000000
 ```
 
 ## QEMU

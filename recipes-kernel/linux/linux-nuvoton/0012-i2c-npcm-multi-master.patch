@@ -1,0 +1,153 @@
+From 67a887693933fc00ae02f3bccd6714555d6e877a Mon Sep 17 00:00:00 2001
+From: Marvin Lin <milkfafa@gmail.com>
+Date: Tue, 11 Nov 2025 10:48:14 +0800
+Subject: [PATCH] i2c: npcm: test multi-master
+
+Upstream-Status: Pending [Not submitted to upstream yet]
+Signed-off-by: Ban Feng <kcfeng0@nuvoton.com>
+---
+ drivers/i2c/busses/i2c-npcm7xx.c | 56 ++++++++++++++++++++++++++------
+ 1 file changed, 46 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/i2c/busses/i2c-npcm7xx.c b/drivers/i2c/busses/i2c-npcm7xx.c
+index 82e228b43e3f..09002ccee7e7 100644
+--- a/drivers/i2c/busses/i2c-npcm7xx.c
++++ b/drivers/i2c/busses/i2c-npcm7xx.c
+@@ -595,6 +595,7 @@ struct npcm_i2c {
+ 	u64 tx_complete_cnt;
+ 	u64 ab_slvrstr_cnt;
+ 	bool ber_state; /* Indicate the bus error state */
++	bool bus_is_mm; //mm = multi-master;
+ };
+ 
+ static inline void npcm_i2c_select_bank(struct npcm_i2c *bus,
+@@ -903,7 +904,7 @@ static int npcm_i2c_slave_enable(struct npcm_i2c *bus, enum i2c_addr addr_type,
+ }
+ #endif
+ 
+-static void npcm_i2c_reset(struct npcm_i2c *bus)
++static void npcm_i2c_reset(struct npcm_i2c *bus, bool force_reset)
+ {
+ 	/*
+ 	 * Save I2CCTL1 relevant bits. It is being cleared when the module
+@@ -914,6 +915,13 @@ static void npcm_i2c_reset(struct npcm_i2c *bus)
+ 	u8 addr;
+ #endif
+ 
++	if ((bus->bus_is_mm == true) && (force_reset == false)) {
++		dev_warn(bus->dev,"I2C-%d reset is skipped"
++				" because it is multi-master.\n", bus->num);
++		return;
++	}
++	dev_warn(bus->dev,"Resetting I2C-%d controller.\n", bus->num);
++
+ 	i2cctl1 = ioread8(bus->reg + NPCM_I2CCTL1);
+ 
+ 	npcm_i2c_disable(bus);
+@@ -1984,10 +1992,23 @@ static int npcm_i2c_recovery_tgclk(struct i2c_adapter *_adap)
+ 	int              iter = 27;
+ 
+ 	if ((npcm_i2c_get_SDA(_adap) == 1) && (npcm_i2c_get_SCL(_adap) == 1)) {
+-		dev_dbg(bus->dev, "bus%d-0x%x recovery skipped, bus not stuck",
++		dev_notice(bus->dev, "bus%d-0x%x recovery skipped, bus not stuck",
+ 			bus->num, bus->dest_addr);
+-		npcm_i2c_reset(bus);
++		npcm_i2c_reset(bus, false);
++		bus->ber_state = false;
++		return 0;
++	} else if (bus->bus_is_mm == true) {
++		dev_warn(bus->dev, "bus%d-0x%x is recovery skipped"
++			" but bus may still be busy or stuck. SCL=%d, SDA=%d\n",
++			bus->num, bus->dest_addr, npcm_i2c_get_SCL(_adap), npcm_i2c_get_SDA(_adap));
++		if (npcm_i2c_get_SCL(_adap) == 0) {
++			npcm_i2c_reset(bus, true);
++		}
+ 		bus->ber_state = false;
++		if (npcm_i2c_get_SDA(_adap) == 0) {
++			dev_warn(bus->dev, "bus%d-0x%x should recovery! SDA=%d\n",
++				bus->num, bus->dest_addr, npcm_i2c_get_SDA(_adap));
++	}
+ 		return 0;
+ 	}
+ 
+@@ -2038,7 +2059,7 @@ static int npcm_i2c_recovery_tgclk(struct i2c_adapter *_adap)
+ 			usleep_range(200, 500);
+ 		}
+ 	}
+-	npcm_i2c_reset(bus);
++	npcm_i2c_reset(bus, false);
+ 	npcm_i2c_int_enable(bus, true);
+ 
+ 	if ((npcm_i2c_get_SDA(_adap) == 1) && (npcm_i2c_get_SCL(_adap) == 1))
+@@ -2195,7 +2216,9 @@ static int npcm_i2c_init_module(struct npcm_i2c *bus, enum i2c_mode mode,
+ 	val = (val | NPCM_I2CCTL1_NMINTE) & ~NPCM_I2CCTL1_RWS;
+ 	iowrite8(val, bus->reg + NPCM_I2CCTL1);
+ 
+-	npcm_i2c_reset(bus);
++	dev_notice(bus->dev, "Resetting I2C-%d controller as part of initialization.\n",
++			bus->num);
++	npcm_i2c_reset(bus, true);
+ 
+ 	/* Check HW is OK: SDA and SCL should be high at this point. */
+ 	if ((npcm_i2c_get_SDA(&bus->adap) == 0) || (npcm_i2c_get_SCL(&bus->adap) == 0)) {
+@@ -2415,7 +2438,9 @@ static int npcm_i2c_master_xfer(struct i2c_adapter *adap, struct i2c_msg *msgs,
+ 	 */
+ 	if (bus_busy || bus->ber_state) {
+ 		iowrite8(NPCM_I2CCST_BB, bus->reg + NPCM_I2CCST);
+-		npcm_i2c_reset(bus);
++		npcm_i2c_reset(bus, true);
++		dev_warn(bus->dev, "bus%d-0x%x performing recovery bb\n",
++				bus->num, bus->dest_addr);
+ 		i2c_recover_bus(adap);
+ 		return -EAGAIN;
+ 	}
+@@ -2448,6 +2473,8 @@ static int npcm_i2c_master_xfer(struct i2c_adapter *adap, struct i2c_msg *msgs,
+ 			if (bus->timeout_cnt < ULLONG_MAX)
+ 				bus->timeout_cnt++;
+ 			if (bus->master_or_slave == I2C_MASTER) {
++				dev_warn(bus->dev, "bus%d-0x%x performing recovery. TO\n",
++						bus->num, bus->dest_addr);
+ 				i2c_recover_bus(adap);
+ 				bus->cmd_err = -EIO;
+ 				bus->state = I2C_IDLE;
+@@ -2456,8 +2483,11 @@ static int npcm_i2c_master_xfer(struct i2c_adapter *adap, struct i2c_msg *msgs,
+ 	}
+ 
+ 	/* if there was BER, check if need to recover the bus: */
+-	if (bus->cmd_err == -EAGAIN)
+-		bus->cmd_err = i2c_recover_bus(adap);
++	if (bus->cmd_err == -EAGAIN) {
++		dev_warn(bus->dev, "bus%d-0x%x performing recovery. EAGAIN\n",
++				bus->num, bus->dest_addr);
++		/*bus->cmd_err = */i2c_recover_bus(adap);
++	}
+ 
+ 	/*
+ 	 * After any type of error, check if LAST bit is still set,
+@@ -2465,8 +2495,11 @@ static int npcm_i2c_master_xfer(struct i2c_adapter *adap, struct i2c_msg *msgs,
+ 	 * It cannot be cleared without resetting the module.
+ 	 */
+ 	else if (bus->cmd_err &&
+-		 (bus->data->rxf_ctl_last_pec & ioread8(bus->reg + NPCM_I2CRXF_CTL)))
+-		npcm_i2c_reset(bus);
++		 (bus->data->rxf_ctl_last_pec & ioread8(bus->reg + NPCM_I2CRXF_CTL))) {
++		dev_notice(bus->dev, "Resetting I2C-%d controller because of LAST bit"
++			" being set: cmd_err=%d\n", bus->num, bus->cmd_err);
++		npcm_i2c_reset(bus, true);
++	}
+ 
+ 	/* After any xfer, successful or not, stall and EOB must be disabled */
+ 	npcm_i2c_stall_after_start(bus, false);
+@@ -2593,6 +2626,9 @@ static int npcm_i2c_probe_bus(struct platform_device *pdev)
+ 	adap->dev.of_node = pdev->dev.of_node;
+ 	adap->nr = pdev->id;
+ 
++	bus->bus_is_mm = of_property_read_bool(pdev->dev.of_node, "multi-master");
++	dev_info(bus->dev, "i2c bus %d multi-master=%s\n", bus->num, bus->bus_is_mm ? "yes" : "no");
++
+ 	irq = platform_get_irq(pdev, 0);
+ 	if (irq < 0)
+ 		return irq;
+-- 
+2.34.1
+

@@ -1,4 +1,4 @@
-From 98fec9bfa84b83ce49d7b19c816a4a31d201fb67 Mon Sep 17 00:00:00 2001
+From 32e4b40e1f331a15e580a1f775111007c94bb2a9 Mon Sep 17 00:00:00 2001
 From: Joseph Liu <kwliu@nuvoton.com>
 Date: Mon, 13 Oct 2025 17:08:46 +0800
 Subject: [PATCH] fix meta-arm and meta-nuvoton break
@@ -19,23 +19,41 @@ Signed-off-by: Joseph Liu <kwliu@nuvoton.com>
  .../recipes-test/pacbti/test-pacbti.bb        |  2 +-
  meta-nuvoton/conf/layer.conf                  |  2 +-
  .../images/npcm7xx-bootblock_10.10.18.bb      | 26 -----------
- .../images/npcm7xx-bootblock_10.10.19.bb      |  2 +-
+ .../images/npcm7xx-bootblock_10.10.19.bb      |  5 +-
+ ...01-Adjust-paths-for-use-with-Bitbake.patch |  2 +
+ .../recipes-bsp/images/npcm8xx-bootblock.inc  |  5 +-
  .../images/npcm8xx-bootblock_0.4.3.bb         |  3 --
- .../images/npcm8xx-bootblock_0.4.6.bb         |  3 --
- .../images/npcm8xx-bootloader/settings.json   |  4 +-
+ .../images/npcm8xx-bootblock_0.4.8.bb         |  3 --
+ .../images/npcm8xx-bootblock_0.5.6.bb         |  3 ++
+ .../images/npcm8xx-bootloader/settings.json   |  2 +-
  ....1.0.bb => npcm8xx-bootloader_04.03.08.bb} | 15 +++---
  .../images/npcm8xx-igps-native_04.00.07.bb    |  4 --
  .../recipes-bsp/images/npcm8xx-igps.inc       | 46 -------------------
  .../images/npcm8xx-tip-fw_0.6.7.0.5.6.bb      |  5 --
+ ...0.6.0.bb => npcm8xx-tip-fw_0.8.2.0.7.1.bb} |  2 +-
+ .../u-boot/u-boot-common-nuvoton.inc          | 14 ------
+ .../u-boot/u-boot-common-nuvoton_2021.04.inc  |  2 +-
+ .../u-boot/u-boot-common-nuvoton_2023.10.inc  |  2 +-
+ .../u-boot/u-boot-fw-utils-nuvoton_2021.04.bb |  6 +--
+ .../u-boot/u-boot-fw-utils-nuvoton_2023.10.bb |  6 +--
+ .../u-boot/u-boot-fw-utils-nuvoton_git.bb     | 42 -----------------
+ .../recipes-bsp/u-boot/u-boot-nuvoton.inc     |  8 ++--
+ .../recipes-bsp/u-boot/u-boot-nuvoton_git.bb  | 10 ----
  .../udev/udev-nuvoton-mtd-partitions.bb       |  5 +-
- 15 files changed, 19 insertions(+), 104 deletions(-)
+ .../program-edid/program-edid.bb              |  8 ++--
+ 28 files changed, 45 insertions(+), 189 deletions(-)
  delete mode 100644 meta-nuvoton/recipes-bsp/images/npcm7xx-bootblock_10.10.18.bb
  delete mode 100644 meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock_0.4.3.bb
- delete mode 100644 meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock_0.4.6.bb
+ delete mode 100644 meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock_0.4.8.bb
+ create mode 100644 meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock_0.5.6.bb
  rename meta-nuvoton/recipes-bsp/images/{npcm8xx-bootloader_0.1.0.bb => npcm8xx-bootloader_04.03.08.bb} (87%)
  delete mode 100644 meta-nuvoton/recipes-bsp/images/npcm8xx-igps-native_04.00.07.bb
  delete mode 100644 meta-nuvoton/recipes-bsp/images/npcm8xx-igps.inc
  delete mode 100644 meta-nuvoton/recipes-bsp/images/npcm8xx-tip-fw_0.6.7.0.5.6.bb
+ rename meta-nuvoton/recipes-bsp/images/{npcm8xx-tip-fw_0.7.1.0.6.0.bb => npcm8xx-tip-fw_0.8.2.0.7.1.bb} (63%)
+ delete mode 100644 meta-nuvoton/recipes-bsp/u-boot/u-boot-common-nuvoton.inc
+ delete mode 100644 meta-nuvoton/recipes-bsp/u-boot/u-boot-fw-utils-nuvoton_git.bb
+ delete mode 100644 meta-nuvoton/recipes-bsp/u-boot/u-boot-nuvoton_git.bb
 
 diff --git a/meta-arm/meta-arm-bsp/conf/layer.conf b/meta-arm/meta-arm-bsp/conf/layer.conf
 index 9013d11f8a..3a428b054e 100644
@@ -132,18 +150,63 @@ index f3d1aa2e57..0000000000
 -
 -addtask deploy before do_build after do_compile
 diff --git a/meta-nuvoton/recipes-bsp/images/npcm7xx-bootblock_10.10.19.bb b/meta-nuvoton/recipes-bsp/images/npcm7xx-bootblock_10.10.19.bb
-index db6c08a22d..b3e607647e 100644
+index db6c08a22d..e2ea1c5253 100644
 --- a/meta-nuvoton/recipes-bsp/images/npcm7xx-bootblock_10.10.19.bb
 +++ b/meta-nuvoton/recipes-bsp/images/npcm7xx-bootblock_10.10.19.bb
-@@ -6,7 +6,7 @@ LIC_FILES_CHKSUM = "file://LICENSE;md5=b234ee4d69f5fce4486a80fdaf4a4263"
+@@ -6,7 +6,8 @@ LIC_FILES_CHKSUM = "file://LICENSE;md5=b234ee4d69f5fce4486a80fdaf4a4263"
  
  FILENAME = "Poleg_bootblock_${PV}.bin"
  
 -S = "${WORKDIR}"
 +S = "${WORKDIR}/sources"
++UNPACKDIR = "${S}"
  
  SRCREV = "cac8f0ed8c6e875148ec37b657fcbdd1058c2c69"
  SRC_URI = " \
+@@ -20,7 +21,7 @@ SRC_URI[bin.sha256sum] = "1bc367032b2ac76190064256a306993a0405de2a2af5b4fad2c549
+ inherit deploy
+ 
+ do_deploy () {
+-	install -D -m 644 ${WORKDIR}/${FILENAME} ${DEPLOYDIR}/Poleg_bootblock.bin
++	install -D -m 644 ${UNPACKDIR}/${FILENAME} ${DEPLOYDIR}/Poleg_bootblock.bin
+ }
+ 
+ addtask deploy before do_build after do_compile
+diff --git a/meta-nuvoton/recipes-bsp/images/npcm7xx-igps/0001-Adjust-paths-for-use-with-Bitbake.patch b/meta-nuvoton/recipes-bsp/images/npcm7xx-igps/0001-Adjust-paths-for-use-with-Bitbake.patch
+index 118f199641..3db214b250 100644
+--- a/meta-nuvoton/recipes-bsp/images/npcm7xx-igps/0001-Adjust-paths-for-use-with-Bitbake.patch
++++ b/meta-nuvoton/recipes-bsp/images/npcm7xx-igps/0001-Adjust-paths-for-use-with-Bitbake.patch
+@@ -3,6 +3,8 @@ From: Benjamin Fair <benjaminfair@google.com>
+ Date: Wed, 23 Oct 2019 14:23:08 -0700
+ Subject: [PATCH] Adjust paths for use with Bitbake
+ 
++Upstream-Status: Pending
++
+ Signed-off-by: Benjamin Fair <benjaminfair@google.com>
+ ---
+  ImageGeneration/inputs/mergedBootBlockAndUboot.xml     | 10 +++++-----
+diff --git a/meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock.inc b/meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock.inc
+index 5948d3cec9..f2e5faaac1 100644
+--- a/meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock.inc
++++ b/meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock.inc
+@@ -12,14 +12,15 @@ BB_BRANCH ?= "main"
+ SRC_URI = " \
+     git://github.com/Nuvoton-Israel/npcm8xx-bootblock;branch=${BB_BRANCH};protocol=https"
+ 
+-export CROSS_COMPILE="${TARGET_PREFIX}"
++export CROSS_COMPILE = "${TARGET_PREFIX}"
+ CFLAGS[unexport] = "1"
+ LDFLAGS[unexport] = "1"
+ AS[unexport] = "1"
+ LD[unexport] = "1"
+ do_configure[noexec] = "1"
++OPTIONAL_FLAGS = ""
+ 
+-EXTRA_OEMAKE += "CROSS_COMPILER_INC=${STAGING_DIR_HOST}${includedir}"
++EXTRA_OEMAKE += "CROSS_COMPILER_INC=${STAGING_DIR_HOST}${includedir} OPTIONAL_FLAGS=${OPTIONAL_FLAGS}"
+ 
+ TIP = "${@'tip' if d.getVar("TIP_IMAGE") == 'True' else 'no_tip'}"
+ BOOTBLOCK = "arbel_a35_bootblock"
 diff --git a/meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock_0.4.3.bb b/meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock_0.4.3.bb
 deleted file mode 100644
 index 4e9266a26b..0000000000
@@ -153,20 +216,29 @@ index 4e9266a26b..0000000000
 -SRCREV = "d300c35173a733a4cfa2f877477d5e72f9c3b538"
 -
 -require npcm8xx-bootblock.inc
-diff --git a/meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock_0.4.6.bb b/meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock_0.4.6.bb
+diff --git a/meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock_0.4.8.bb b/meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock_0.4.8.bb
 deleted file mode 100644
-index 61de1333e7..0000000000
---- a/meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock_0.4.6.bb
+index 17a94bef91..0000000000
+--- a/meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock_0.4.8.bb
 +++ /dev/null
 @@ -1,3 +0,0 @@
--SRCREV = "b45a45bce6e557af49b43492904579edb5f084a3"
+-SRCREV = "e18737d17d4cf5e7768598a291a7ef2b8a07a776"
 -
 -require npcm8xx-bootblock.inc
+diff --git a/meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock_0.5.6.bb b/meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock_0.5.6.bb
+new file mode 100644
+index 0000000000..a302f4e951
+--- /dev/null
++++ b/meta-nuvoton/recipes-bsp/images/npcm8xx-bootblock_0.5.6.bb
+@@ -0,0 +1,3 @@
++SRCREV = "4478e7a4d36afd33c7aab6b139e386a1dd5f5a2d"
++
++require npcm8xx-bootblock.inc
 diff --git a/meta-nuvoton/recipes-bsp/images/npcm8xx-bootloader/settings.json b/meta-nuvoton/recipes-bsp/images/npcm8xx-bootloader/settings.json
-index 8a741dcb4b..b40d303d2a 100644
+index 8a741dcb4b..d9c103046d 100644
 --- a/meta-nuvoton/recipes-bsp/images/npcm8xx-bootloader/settings.json
 +++ b/meta-nuvoton/recipes-bsp/images/npcm8xx-bootloader/settings.json
-@@ -3,11 +3,11 @@
+@@ -3,7 +3,7 @@
      {
          "MC_CONFIG": "0x04"
      },
@@ -175,12 +247,6 @@ index 8a741dcb4b..b40d303d2a 100644
      {
          "COMBO1_OFFSET": "2048*1024"
      },
-     "BootBlockAndHeader_no_tip.xml":
-     {
-     }
--}
-+}
-\ No newline at end of file
 diff --git a/meta-nuvoton/recipes-bsp/images/npcm8xx-bootloader_0.1.0.bb b/meta-nuvoton/recipes-bsp/images/npcm8xx-bootloader_04.03.08.bb
 similarity index 87%
 rename from meta-nuvoton/recipes-bsp/images/npcm8xx-bootloader_0.1.0.bb
@@ -303,6 +369,225 @@ index 3275ec7091..0000000000
 -OUTPUT_BIN = "output_binaries_${DEVICE_GEN}_${IGPS_MACHINE}"
 -
 -require npcm8xx-tip-fw.inc
+diff --git a/meta-nuvoton/recipes-bsp/images/npcm8xx-tip-fw_0.7.1.0.6.0.bb b/meta-nuvoton/recipes-bsp/images/npcm8xx-tip-fw_0.8.2.0.7.1.bb
+similarity index 63%
+rename from meta-nuvoton/recipes-bsp/images/npcm8xx-tip-fw_0.7.1.0.6.0.bb
+rename to meta-nuvoton/recipes-bsp/images/npcm8xx-tip-fw_0.8.2.0.7.1.bb
+index 90f074f157..a26e86a1a4 100644
+--- a/meta-nuvoton/recipes-bsp/images/npcm8xx-tip-fw_0.7.1.0.6.0.bb
++++ b/meta-nuvoton/recipes-bsp/images/npcm8xx-tip-fw_0.8.2.0.7.1.bb
+@@ -1,4 +1,4 @@
+-SRCREV = "bdbfc0324150c4471c77bafc2cf5f6f3c64cf814"
++SRCREV = "800b4fe1cec1b04681ab4367afa4b0c9300d43d5"
+ 
+ OUTPUT_BIN = "output_binaries_${DEVICE_GEN}_${IGPS_MACHINE}"
+ 
+diff --git a/meta-nuvoton/recipes-bsp/u-boot/u-boot-common-nuvoton.inc b/meta-nuvoton/recipes-bsp/u-boot/u-boot-common-nuvoton.inc
+deleted file mode 100644
+index a4f590cbc8..0000000000
+--- a/meta-nuvoton/recipes-bsp/u-boot/u-boot-common-nuvoton.inc
++++ /dev/null
+@@ -1,14 +0,0 @@
+-HOMEPAGE = "https://github.com/Nuvoton-Israel/u-boot"
+-SECTION = "bootloaders"
+-DEPENDS += "flex-native bison-native"
+-
+-LICENSE = "GPL-2.0-or-later"
+-LIC_FILES_CHKSUM = "file://Licenses/README;md5=5a7450c57ffe5ae63fd732446b988025"
+-
+-UBRANCH = "npcm-v2021.04"
+-SRC_URI = "git://github.com/Nuvoton-Israel/u-boot.git;branch=${UBRANCH};protocol=https"
+-SRCREV = "b0b0222d39fe45fd6062df5dd3cce77b1a89841d"
+-
+-S = "${WORKDIR}/git"
+-
+-PV .= "+${UBRANCH}+"
+diff --git a/meta-nuvoton/recipes-bsp/u-boot/u-boot-common-nuvoton_2021.04.inc b/meta-nuvoton/recipes-bsp/u-boot/u-boot-common-nuvoton_2021.04.inc
+index a2413d555a..2df3d939aa 100644
+--- a/meta-nuvoton/recipes-bsp/u-boot/u-boot-common-nuvoton_2021.04.inc
++++ b/meta-nuvoton/recipes-bsp/u-boot/u-boot-common-nuvoton_2021.04.inc
+@@ -7,7 +7,7 @@ LIC_FILES_CHKSUM = "file://Licenses/README;md5=2ca5f2c35c8cc335f0a19756634782f1"
+ 
+ UBRANCH = "npcm-v2023.10"
+ SRC_URI = "git://github.com/Nuvoton-Israel/u-boot.git;branch=${UBRANCH};protocol=https"
+-SRCREV = "1501268746d3f0c538908ddb7a1b901864dbfcff"
++SRCREV = "08ee9a315b253fd8d3b59aca6bb0425d7eb678ac"
+ 
+ S = "${WORKDIR}/git"
+ 
+diff --git a/meta-nuvoton/recipes-bsp/u-boot/u-boot-common-nuvoton_2023.10.inc b/meta-nuvoton/recipes-bsp/u-boot/u-boot-common-nuvoton_2023.10.inc
+index 78f8e092e6..bd7e7fe600 100644
+--- a/meta-nuvoton/recipes-bsp/u-boot/u-boot-common-nuvoton_2023.10.inc
++++ b/meta-nuvoton/recipes-bsp/u-boot/u-boot-common-nuvoton_2023.10.inc
+@@ -7,7 +7,7 @@ LIC_FILES_CHKSUM = "file://Licenses/README;md5=2ca5f2c35c8cc335f0a19756634782f1"
+ 
+ UBRANCH = "npcm-v2023.10"
+ SRC_URI = "git://github.com/Nuvoton-Israel/u-boot.git;branch=${UBRANCH};protocol=https"
+-SRCREV = "fb62cf0fb4b97420ca20e9ccb0e12fa8e59213d3"
++SRCREV = "cb2db59d4fec4e4fecb3234e39be451ac17000d2"
+ 
+ S = "${WORKDIR}/git"
+ 
+diff --git a/meta-nuvoton/recipes-bsp/u-boot/u-boot-fw-utils-nuvoton_2021.04.bb b/meta-nuvoton/recipes-bsp/u-boot/u-boot-fw-utils-nuvoton_2021.04.bb
+index 4f06ecf2a0..0e76503f4a 100644
+--- a/meta-nuvoton/recipes-bsp/u-boot/u-boot-fw-utils-nuvoton_2021.04.bb
++++ b/meta-nuvoton/recipes-bsp/u-boot/u-boot-fw-utils-nuvoton_2021.04.bb
+@@ -1,7 +1,8 @@
+ require u-boot-common-nuvoton_${PV}.inc
++require recipes-bsp/u-boot/u-boot-configure.inc
+ 
+ SUMMARY = "U-Boot bootloader fw_printenv/setenv utilities"
+-DEPENDS = "mtd-utils bison-native"
++DEPENDS += "mtd-utils bison-native"
+ RDEPENDS:${PN} = "udev-nuvoton-mtd-partitions"
+ 
+ PROVIDES += "u-boot-fw-utils"
+@@ -15,7 +16,6 @@ EXTRA_OEMAKE:class-cross = 'ARCH=${TARGET_ARCH} CC="${CC} ${CFLAGS} ${LDFLAGS}"
+ inherit uboot-config
+ 
+ do_compile () {
+-  oe_runmake ${UBOOT_MACHINE}
+   oe_runmake envtools
+ }
+ 
+@@ -24,7 +24,7 @@ do_install () {
+   install -d ${D}${sysconfdir}
+   install -m 755 ${S}/tools/env/fw_printenv ${D}${base_sbindir}/fw_printenv
+   install -m 755 ${S}/tools/env/fw_printenv ${D}${base_sbindir}/fw_setenv
+-  install -m 0644 ${WORKDIR}/fw_env.config ${D}${sysconfdir}/fw_env.config
++  install -m 0644 ${UNPACKDIR}/fw_env.config ${D}${sysconfdir}/fw_env.config
+ }
+ 
+ do_install:class-cross () {
+diff --git a/meta-nuvoton/recipes-bsp/u-boot/u-boot-fw-utils-nuvoton_2023.10.bb b/meta-nuvoton/recipes-bsp/u-boot/u-boot-fw-utils-nuvoton_2023.10.bb
+index 4f06ecf2a0..0e76503f4a 100644
+--- a/meta-nuvoton/recipes-bsp/u-boot/u-boot-fw-utils-nuvoton_2023.10.bb
++++ b/meta-nuvoton/recipes-bsp/u-boot/u-boot-fw-utils-nuvoton_2023.10.bb
+@@ -1,7 +1,8 @@
+ require u-boot-common-nuvoton_${PV}.inc
++require recipes-bsp/u-boot/u-boot-configure.inc
+ 
+ SUMMARY = "U-Boot bootloader fw_printenv/setenv utilities"
+-DEPENDS = "mtd-utils bison-native"
++DEPENDS += "mtd-utils bison-native"
+ RDEPENDS:${PN} = "udev-nuvoton-mtd-partitions"
+ 
+ PROVIDES += "u-boot-fw-utils"
+@@ -15,7 +16,6 @@ EXTRA_OEMAKE:class-cross = 'ARCH=${TARGET_ARCH} CC="${CC} ${CFLAGS} ${LDFLAGS}"
+ inherit uboot-config
+ 
+ do_compile () {
+-  oe_runmake ${UBOOT_MACHINE}
+   oe_runmake envtools
+ }
+ 
+@@ -24,7 +24,7 @@ do_install () {
+   install -d ${D}${sysconfdir}
+   install -m 755 ${S}/tools/env/fw_printenv ${D}${base_sbindir}/fw_printenv
+   install -m 755 ${S}/tools/env/fw_printenv ${D}${base_sbindir}/fw_setenv
+-  install -m 0644 ${WORKDIR}/fw_env.config ${D}${sysconfdir}/fw_env.config
++  install -m 0644 ${UNPACKDIR}/fw_env.config ${D}${sysconfdir}/fw_env.config
+ }
+ 
+ do_install:class-cross () {
+diff --git a/meta-nuvoton/recipes-bsp/u-boot/u-boot-fw-utils-nuvoton_git.bb b/meta-nuvoton/recipes-bsp/u-boot/u-boot-fw-utils-nuvoton_git.bb
+deleted file mode 100644
+index 029b436e9a..0000000000
+--- a/meta-nuvoton/recipes-bsp/u-boot/u-boot-fw-utils-nuvoton_git.bb
++++ /dev/null
+@@ -1,42 +0,0 @@
+-require u-boot-common-nuvoton.inc
+-
+-SUMMARY = "U-Boot bootloader fw_printenv/setenv utilities"
+-DEPENDS = "mtd-utils bison-native"
+-RDEPENDS:${PN} = "udev-nuvoton-mtd-partitions"
+-
+-PROVIDES += "u-boot-fw-utils"
+-SRC_URI += "file://fw_env.config"
+-
+-INSANE_SKIP:${PN} = "already-stripped"
+-
+-EXTRA_OEMAKE:class-target = 'CROSS_COMPILE="${TARGET_PREFIX}" HOSTCC="${BUILD_CC} ${BUILD_FLAGS} ${BUILD_LDFLAGS}" CC="${CC} ${CFLAGS} ${LDFLAGS}" STRIP=true V=1'
+-EXTRA_OEMAKE:class-cross = 'ARCH=${TARGET_ARCH} CC="${CC} ${CFLAGS} ${LDFLAGS}" V=1'
+-
+-inherit uboot-config
+-
+-do_compile () {
+-  oe_runmake ${UBOOT_MACHINE}
+-  oe_runmake envtools
+-}
+-
+-do_install () {
+-  install -d ${D}${base_sbindir}
+-  install -d ${D}${sysconfdir}
+-  install -m 755 ${S}/tools/env/fw_printenv ${D}${base_sbindir}/fw_printenv
+-  install -m 755 ${S}/tools/env/fw_printenv ${D}${base_sbindir}/fw_setenv
+-  install -m 0644 ${WORKDIR}/fw_env.config ${D}${sysconfdir}/fw_env.config
+-}
+-
+-do_install:class-cross () {
+-  install -d ${D}${bindir_cross}
+-  install -m 755 ${S}/tools/env/fw_printenv ${D}${bindir_cross}/fw_printenv
+-  install -m 755 ${S}/tools/env/fw_printenv ${D}${bindir_cross}/fw_setenv
+-}
+-
+-SYSROOT_PREPROCESS_FUNCS:class-cross = "uboot_fw_utils_cross"
+-uboot_fw_utils_cross() {
+-	sysroot_stage_dir ${D}${bindir_cross} ${SYSROOT_DESTDIR}${bindir_cross}
+-}
+-
+-PACKAGE_ARCH = "${MACHINE_ARCH}"
+-BBCLASSEXTEND = "cross"
+diff --git a/meta-nuvoton/recipes-bsp/u-boot/u-boot-nuvoton.inc b/meta-nuvoton/recipes-bsp/u-boot/u-boot-nuvoton.inc
+index 40fb5ad4ae..16177aac01 100644
+--- a/meta-nuvoton/recipes-bsp/u-boot/u-boot-nuvoton.inc
++++ b/meta-nuvoton/recipes-bsp/u-boot/u-boot-nuvoton.inc
+@@ -186,9 +186,9 @@ do_install () {
+         fi
+     fi
+ 
+-    if [ -e ${WORKDIR}/fw_env.config ] ; then
++    if [ -e ${UNPACKDIR}/fw_env.config ] ; then
+         install -d ${D}${sysconfdir}
+-        install -m 644 ${WORKDIR}/fw_env.config ${D}${sysconfdir}/fw_env.config
++        install -m 644 ${UNPACKDIR}/fw_env.config ${D}${sysconfdir}/fw_env.config
+     fi
+ 
+     if [ -n "${SPL_BINARY}" ]
+@@ -217,7 +217,7 @@ do_install () {
+ 
+     if [ -n "${UBOOT_ENV}" ]
+     then
+-        install -m 644 ${WORKDIR}/${UBOOT_ENV_BINARY} ${D}/boot/${UBOOT_ENV_IMAGE}
++        install -m 644 ${B}/${UBOOT_ENV_BINARY} ${D}/boot/${UBOOT_ENV_IMAGE}
+         ln -sf ${UBOOT_ENV_IMAGE} ${D}/boot/${UBOOT_ENV_BINARY}
+     fi
+ 
+@@ -320,7 +320,7 @@ do_deploy () {
+ 
+     if [ -n "${UBOOT_ENV}" ]
+     then
+-        install -m 644 ${WORKDIR}/${UBOOT_ENV_BINARY} ${DEPLOYDIR}/${UBOOT_ENV_IMAGE}
++        install -m 644 ${B}/${UBOOT_ENV_BINARY} ${DEPLOYDIR}/${UBOOT_ENV_IMAGE}
+         rm -f ${DEPLOYDIR}/${UBOOT_ENV_BINARY} ${DEPLOYDIR}/${UBOOT_ENV_SYMLINK}
+         ln -sf ${UBOOT_ENV_IMAGE} ${DEPLOYDIR}/${UBOOT_ENV_BINARY}
+         ln -sf ${UBOOT_ENV_IMAGE} ${DEPLOYDIR}/${UBOOT_ENV_SYMLINK}
+diff --git a/meta-nuvoton/recipes-bsp/u-boot/u-boot-nuvoton_git.bb b/meta-nuvoton/recipes-bsp/u-boot/u-boot-nuvoton_git.bb
+deleted file mode 100644
+index d4c4697509..0000000000
+--- a/meta-nuvoton/recipes-bsp/u-boot/u-boot-nuvoton_git.bb
++++ /dev/null
+@@ -1,10 +0,0 @@
+-DESCRIPTION = "U-boot for Nuvoton NPCM7xx/NPCM8xx Baseboard Management Controller"
+-
+-require u-boot-common-nuvoton.inc
+-require u-boot-nuvoton.inc
+-
+-PROVIDES += "u-boot"
+-
+-DEPENDS += "dtc-native"
+-
+-SRC_URI:append:df-phosphor-mmc = " file://u-boot-emmc.cfg"
 diff --git a/meta-nuvoton/recipes-core/udev/udev-nuvoton-mtd-partitions.bb b/meta-nuvoton/recipes-core/udev/udev-nuvoton-mtd-partitions.bb
 index 2b8c53d126..8ece465899 100644
 --- a/meta-nuvoton/recipes-core/udev/udev-nuvoton-mtd-partitions.bb
@@ -322,6 +607,32 @@ index 2b8c53d126..8ece465899 100644
      install -d ${D}/${base_libdir}/udev/rules.d
 -    install -m 0644 ${WORKDIR}/76-nuvoton-mtd-partitions.rules ${D}/${base_libdir}/udev/rules.d
 +    install -m 0644 ${UNPACKDIR}/76-nuvoton-mtd-partitions.rules ${D}/${base_libdir}/udev/rules.d
+ }
+diff --git a/meta-nuvoton/recipes-nuvoton/program-edid/program-edid.bb b/meta-nuvoton/recipes-nuvoton/program-edid/program-edid.bb
+index 163a5ef906..a69f754701 100644
+--- a/meta-nuvoton/recipes-nuvoton/program-edid/program-edid.bb
++++ b/meta-nuvoton/recipes-nuvoton/program-edid/program-edid.bb
+@@ -16,17 +16,17 @@ SRC_URI = "file://program-edid.service \
+ 
+ SYSTEMD_PACKAGES = "${PN}"
+ SYSTEMD_SERVICE:${PN} = "program-edid.service"
+-SYSTEMD_ENVIRONMENT_FILE:${PN} +="obmc/edid/program_edid"
++SYSTEMD_ENVIRONMENT_FILE:${PN} += "obmc/edid/program_edid"
+ FILES:${PN} += "/usr/share/edid/edid.bin"
+ 
+ do_compile() {
+-    json2edid ${WORKDIR}/edid.json ${WORKDIR}/edid.bin
++    json2edid ${UNPACKDIR}/edid.json ${UNPACKDIR}/edid.bin
+ }
+ 
+ do_install() {
+     install -d ${D}${bindir}
+-    install -m 0755 ${WORKDIR}/program-edid.sh ${D}${bindir}/
++    install -m 0755 ${UNPACKDIR}/program-edid.sh ${D}${bindir}/
+     install -d ${D}${datadir}/edid
+-    install -m 0644 -D ${WORKDIR}/edid.bin \
++    install -m 0644 -D ${UNPACKDIR}/edid.bin \
+         ${D}${datadir}/edid/edid.bin
  }
 -- 
 2.43.0

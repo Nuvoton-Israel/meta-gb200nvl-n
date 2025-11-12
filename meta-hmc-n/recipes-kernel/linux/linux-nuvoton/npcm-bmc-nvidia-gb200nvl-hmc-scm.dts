@@ -104,15 +104,6 @@
 	//mellanox,multi-host;
 };
 
-&gmac3 {
-	//status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&r2_pins
-		     &r2oen_pins>;
-	use-ncsi;
-	//mellanox,multi-host;
-};
-
 &sgpio1 {
 	status = "okay";
 	gpio-line-names =

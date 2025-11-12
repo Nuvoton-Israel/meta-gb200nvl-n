@@ -38,15 +38,17 @@
 			bias-disable;
 			output-low;
 		};
-		gpio68o_pins: gpio68o-pins {
+		gpio68oh_pins: gpio68oh-pins {
 			pins = "GPIO68/FANIN4";
 			bias-disable;
 			output-high;
+			persist-enable;
 		};
-		gpio69o_pins: gpio69o-pins {
+		gpio69ol_pins: gpio69ol-pins {
 			pins = "GPIO69/FANIN5";
 			bias-disable;
-			output-high;
+			output-low;
+			persist-enable;
 		};
 		gpio70o_pins: gpio70o-pins {
 			pins = "GPIO70/FANIN6";
@@ -63,20 +65,22 @@
 			bias-disable;
 			output-high;
 		};
-		gpio73ol_pins: gpio73ol-pins {
+		gpio73oh_pins: gpio73oh-pins {
 			pins = "GPIO73/FANIN9";
 			bias-disable;
-			output-low;
+			output-high;
+			persist-enable;
 		};
 		gpio74ol_pins: gpio74ol-pins {
 			pins = "GPIO74/FANIN10";
 			bias-disable;
 			output-low;
 		};
-		gpio75ol_pins: gpio75ol-pins {
+		gpio75oh_pins: gpio75oh-pins {
 			pins = "GPIO75/FANIN11";
 			bias-disable;
-			output-low;
+			output-high;
+			persist-enable;
 		};
 		gpio78_pins: gpio78-pins {
 			pins = "GPIO78/FANIN14";
@@ -167,6 +171,30 @@
 			pins = "GPIO19/PSPI_CK/SMB4B_SCL";
 			slew-rate = <1>;
 		};
-
+		spi1ck_ds: spi1ck-ds {
+			pins = "GPIO175/SPI1_CK/FANIN19/FM1_CK";
+			drive-strength = <12>;
+			persist-enable;
+		};
+		spi1d0_ds: spi1d0-ds {
+			pins = "GPIO176/SPI1_DO/FANIN18/FM1_DO/STRAP9";
+			drive-strength = <12>;
+			persist-enable;
+		};
+		spi1d1_ds: spi1d1-ds {
+			pins = "GPIO177/SPI1_DI/FANIN17/FM1_D1/STRAP10";
+			drive-strength = <12>;
+			persist-enable;
+		};
+		spi1d2_slew: spi1d2-slew {
+			pins = "GPIO191/SPI1_D1/FANIN17/FM1_D1/STRAP10";
+			slew-rate = <1>;
+			persist-enable;
+		};
+		spi1d3_slew: spi1d3-slew {
+			pins = "GPIO192/SPI1_D3/SPI_nCS3/FM1_D3/SMB15_SCL";
+			slew-rate = <1>;
+			persist-enable;
+		};
 	};
 };

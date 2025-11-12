@@ -1,0 +1,14 @@
+[Unit]
+Description=Display Port Initialization
+Before=program-edid.service
+Before=phosphor-multi-gpio-monitor.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sh -c 'dpinit -d /usr/share/edid/edid.bin'
+ExecStart=/usr/bin/dpinit
+SyslogIdentifier=dpinit
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

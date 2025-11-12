@@ -154,7 +154,7 @@
 
 &ehci2 {
 	status = "okay";
-	phys = <&usbphy3 NPCM_USBH1>;
+	phys = <&usbphy3 NPCM_USBH2>;
 };
 
 &rng {
@@ -175,8 +175,9 @@
 
 &pinctrl {
         pinctrl-names = "default";
-        pinctrl-0 = <&gspi_pins
-		     &vgadig_pins
+        pinctrl-0 = <&vcdhs_pins
+			&smb11ddcs_pins
+		    &vgadig_pins
 		     &espi_pins
 		     &r1_pins
 		     &r1en_pins
@@ -188,14 +189,14 @@
 		     &gpio65o_pins
 		     &gpio66ol_pins
 		     &gpio67ol_pins
-		     &gpio68o_pins
-		     &gpio69o_pins
+		     &gpio68oh_pins
+		     &gpio69ol_pins
 		     &gpio70o_pins
 		     &gpio71_pins
 		     &gpio72o_pins
-		     &gpio73ol_pins
+		     &gpio73oh_pins
 		     &gpio74ol_pins
-		     &gpio75ol_pins
+		     &gpio75oh_pins
 		     &gpio78_pins
 		     &gpio79o_pins
 		     &gpio81ol_pins
@@ -210,5 +211,10 @@
 		     &gpio163_pins
 		     &gpio168o_pins
 		     &gpio187o_pins
-		     &gpio233o_pins>;
+		     &gpio233o_pins
+			 &spi1d2_slew
+			 &spi1d3_slew
+			 &spi1ck_ds
+			 &spi1d0_ds
+			 &spi1d1_ds>;
 };

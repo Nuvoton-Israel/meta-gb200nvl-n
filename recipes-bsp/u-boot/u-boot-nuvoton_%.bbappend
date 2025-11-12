@@ -1,3 +1,4 @@
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
-SRCREV = "4b7dd7dd317115fa1978dc0a89ca313cfd036294"
+SRCREV = "bb363ca1706a0f9f03f25dbbde4f14936883f78d"
+
