@@ -1,0 +1,100 @@
+From 06046ec90cd6ae0914b54b7b70cd2d0d673786a9 Mon Sep 17 00:00:00 2001
+From: Marvin Lin <milkfafa@gmail.com>
+Date: Thu, 13 Nov 2025 14:14:09 +0800
+Subject: [PATCH] ipmi: ssif_bmc: Check gpio can_sleep property and use
+ appropriate API
+
+Signed-off-by: Marvin Lin <milkfafa@gmail.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/char/ipmi/ssif_bmc.c | 52 +++++++++++++++++++++++++++---------
+ 1 file changed, 39 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/char/ipmi/ssif_bmc.c b/drivers/char/ipmi/ssif_bmc.c
+index b3af8e1f40b1..46bb1d6303a0 100644
+--- a/drivers/char/ipmi/ssif_bmc.c
++++ b/drivers/char/ipmi/ssif_bmc.c
+@@ -332,14 +332,25 @@ static ssize_t ssif_bmc_write(struct file *file, const char __user *buf, size_t
+ 		ssif_bmc->set_ssif_bmc_status(ssif_bmc->client, SSIF_BMC_READY);
+ 
+ 	if (!IS_ERR(ssif_bmc->alert)) {
+-		//if gpio is already asserted toggle it
+-		if (gpiod_get_value(ssif_bmc->alert))
+-		{
+-			gpiod_set_value(ssif_bmc->alert, 0);
+-			udelay(ssif_bmc->pulse_width);
++		if (gpiod_cansleep(ssif_bmc->alert)) {
++			//if gpio is already asserted toggle it
++			if (gpiod_get_value_cansleep(ssif_bmc->alert))
++			{
++				gpiod_set_value_cansleep(ssif_bmc->alert, 0);
++				udelay(ssif_bmc->pulse_width);
++			}
++
++			gpiod_set_value_cansleep(ssif_bmc->alert, 1);
++		} else {
++			//if gpio is already asserted toggle it
++			if (gpiod_get_value(ssif_bmc->alert))
++			{
++				gpiod_set_value(ssif_bmc->alert, 0);
++				udelay(ssif_bmc->pulse_width);
++			}
++
++			gpiod_set_value(ssif_bmc->alert, 1);
+ 		}
+-
+-		gpiod_set_value(ssif_bmc->alert, 1);
+ 	}
+ 
+ 	return (ret < 0) ? ret : count;
+@@ -698,8 +709,13 @@ static void process_smbus_cmd(struct ssif_bmc_ctx *ssif_bmc, u8 *val)
+ 	memset(&ssif_bmc->part_buf.payload[0], 0, MAX_PAYLOAD_PER_TRANSACTION);
+ 
+ 	if (*val == SSIF_IPMI_SINGLEPART_WRITE || *val == SSIF_IPMI_MULTIPART_WRITE_START) {
+-		if (!IS_ERR(ssif_bmc->alert))
+-			gpiod_set_value(ssif_bmc->alert, 0);
++		if (!IS_ERR(ssif_bmc->alert)) {
++			if (gpiod_cansleep(ssif_bmc->alert)) {
++				gpiod_set_value_cansleep(ssif_bmc->alert, 0);
++			} else {
++				gpiod_set_value(ssif_bmc->alert, 0);
++			}
++		}
+ 		/* This is new request, flip aborting flag if set */
+ 		if (ssif_bmc->aborting)
+ 			ssif_bmc->aborting = false;
+@@ -756,8 +772,13 @@ static void on_read_requested_event(struct ssif_bmc_ctx *ssif_bmc, u8 *val)
+ 	if (ssif_bmc->part_buf.length > 0)
+ 		*val = ssif_bmc->part_buf.length;
+ 
+-	if (!IS_ERR(ssif_bmc->alert))
+-		gpiod_set_value(ssif_bmc->alert, 0);
++	if (!IS_ERR(ssif_bmc->alert)) {
++		if (gpiod_cansleep(ssif_bmc->alert)) {
++			gpiod_set_value_cansleep(ssif_bmc->alert, 0);
++		} else {
++			gpiod_set_value(ssif_bmc->alert, 0);
++		}
++	}
+ }
+ 
+ static void on_read_processed_event(struct ssif_bmc_ctx *ssif_bmc, u8 *val)
+@@ -991,8 +1012,13 @@ static int ssif_bmc_probe(struct i2c_client *client)
+ #endif //CONFIG_SEPARATE_SSIF_POSTCODES
+ 	}
+ 
+-	if (!IS_ERR(ssif_bmc->alert))
+-		gpiod_set_value(ssif_bmc->alert, 0);
++	if (!IS_ERR(ssif_bmc->alert)) {
++		if (gpiod_cansleep(ssif_bmc->alert)) {
++			gpiod_set_value_cansleep(ssif_bmc->alert, 0);
++		} else {
++			gpiod_set_value(ssif_bmc->alert, 0);
++		}
++	}
+ 	device_create_file(&client->dev, &dev_attr_ssif_timeout);
+ 	return ret;
+ }
+-- 
+2.34.1
+

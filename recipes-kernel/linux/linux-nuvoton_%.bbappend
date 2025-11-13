@@ -107,7 +107,8 @@ SRC_URI:append = " file://0001-reset-npcm8xx-add-50-us-delay-for-usb-phy-clock-s
 SRC_URI:append = " file://0002-reset-npcm-reset-USB-hub.patch"
 
 # ipmission SSIF_bmc driver
-SRC_URI:append = " file://1340-ipmi-ssif_bmc-add-npcm-slave-disable-enable-method.patch"
+SRC_URI:append = " file://0001-ipmi-ssif_bmc-add-npcm-slave-disable-enable-method.patch"
+SRC_URI:append = " file://0002-ipmi-ssif_bmc-Check-gpio-can_sleep-property-and-use-.patch"
 
 # NTC3018Y intrusion detection and timestamp rework
 SRC_URI:append = " file://0001-rtc-nuvoton-Add-intrusion-detection-and-timestamp-re.patch"
