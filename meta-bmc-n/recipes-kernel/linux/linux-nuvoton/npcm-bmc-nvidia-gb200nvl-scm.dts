@@ -124,9 +124,7 @@
 	pinctrl-0 = <&r1_pins
 		     &r1oen_pins>;
 	use-ncsi;
-	//mellanox,multi-host;
 };
-
 
 &siox_gpio {
 	status = "okay";
@@ -542,6 +540,12 @@
     };
 };
 
+&i2c13 {
+	status = "okay";
+	clock-frequency = <400000>;
+};
+
+
 &i2c14 {
 	status = "okay";
 	clock-frequency = <400000>;
@@ -781,7 +785,8 @@
 &pinctrl {
 	pinctrl-names = "default";
 	pinctrl-0 = <&tp_uart_pins
-		     &pin120_input>;
+		     &pin120_input
+			 &pin75_oh>;
 
 	gpio0: gpio@f0010000 {
 		interrupt-controller;
@@ -901,7 +906,12 @@
 		output-low;
 	};
 
-	
+	pin75_oh: pin75-oh {
+		pins = "GPIO75/FANIN11";
+		bias-disable;
+		output-high;
+	};
+
 	smb23b_pins: smb23b-pins {
 		groups = "smb23b";
 		function = "smb23b";
