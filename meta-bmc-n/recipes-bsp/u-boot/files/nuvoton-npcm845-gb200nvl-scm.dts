@@ -79,21 +79,20 @@
 	spi-nor@0 {
 		compatible = "jedec,spi-nor";
 		reg = <0>;
-		spi-max-frequency = <25000000>;
-	};
-	spi_flash@1 {
-		compatible = "jedec,spi-nor";
-		reg = <1>;
-		spi-max-frequency = <25000000>;
+		spi-rx-bus-width = <4>;
+		spi-tx-bus-width = <4>;
 	};
 };
 
 &fiu1 {
 	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi1_pins>;
 	spi-nor@0 {
 		compatible = "jedec,spi-nor";
 		reg = <0>;
-		spi-max-frequency = <25000000>;
+		spi-rx-bus-width = <2>;
+		spi-tx-bus-width = <2>;
 	};
 };
 
@@ -104,9 +103,6 @@
 
 &gmac0 {
 	phy-mode = "sgmii";
-	snps,reset-active-low;
-	snps,reset-delays-us = <0 10000 500000>;
-	snps,reset-gpio = <&gpio5 30 GPIO_ACTIVE_LOW>;    /* gpio190 */
 	status = "okay";
 };
 
