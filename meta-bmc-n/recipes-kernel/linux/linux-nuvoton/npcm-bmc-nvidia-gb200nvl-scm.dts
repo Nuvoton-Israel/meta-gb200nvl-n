@@ -827,7 +827,7 @@
 	};
 
 	pspi_d0_slew: pspi-d0-slew {
-		pins = "GPIO18/PSPI_DO/SMB4B_SDA";
+		pins = "GPIO18/PSPI_D0/SMB4B_SDA";
 		slew-rate = <1>;
 	};
 

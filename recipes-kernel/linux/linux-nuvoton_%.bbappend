@@ -1,4 +1,4 @@
 KSRC = "git://github.com/Nuvoton-Israel/linux;protocol=https;branch=${KBRANCH}"
-KBRANCH = "NPCM-6.1-OpenBMC"
-LINUX_VERSION = "6.1.51"
-SRCREV = "f3a18358fb2edbbe3a5291e7d06431ccc0a1b83c"
+KBRANCH = "NPCM-6.12-OpenBMC"
+LINUX_VERSION = "6.12.40"
+SRCREV = "762a15e09aa5dd0f2e7afee8763f9861c7468962"
