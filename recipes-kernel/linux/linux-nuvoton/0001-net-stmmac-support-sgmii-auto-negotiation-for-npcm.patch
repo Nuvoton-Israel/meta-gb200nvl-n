@@ -1,0 +1,74 @@
+Upstream-Status: Inappropriate [oe-specific]
+
+From 98d598f8fdad3dcafb331b744d820e6660484f9b Mon Sep 17 00:00:00 2001
+From: Joseph Liu <kwliu@nuvoton.com>
+Date: Tue, 6 Jan 2026 10:11:31 +0800
+Subject: [PATCH] net: stmmac: support sgmii auto-negotiation for npcm
+
+add dts property "npcm,sgmii-an" to enable auto-negotiation
+
+Signed-off-by: Stanley Chu <yschu@nuvoton.com>
+
+Signed-off-by: Joseph Liu <kwliu@nuvoton.com>
+---
+ .../ethernet/stmicro/stmmac/stmmac_platform.c | 26 +++++++++++++++++--
+ 1 file changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c
+index 6f76e4871d7a..9a29f89ef9d6 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c
+@@ -22,6 +22,7 @@
+ 
+ #define IND_AC_INDX	0x1FE
+ #define SR_MII_CTRL	0x003E0000
++#define SR_MII_CTRL1	0x003F0000
+ 
+ #ifdef CONFIG_OF
+ 
+@@ -672,10 +673,13 @@ stmmac_probe_config_dt(struct platform_device *pdev, u8 *mac)
+ 	}
+ 
+ 	if (of_device_is_compatible(np, "nuvoton,npcm-dwmac")) {
++		int sgmii_an;
+ 		base = devm_platform_ioremap_resource(pdev, 1);
+ 		if (IS_ERR(base)) {
+ 			dev_warn(&pdev->dev, "devm_platform_ioremap_resource failed\n");
+ 		}
++
++		sgmii_an = of_property_read_bool(np, "npcm,sgmii-an");
+ 		iowrite16((u16)(SR_MII_CTRL >> 9), base + IND_AC_INDX);
+ 		RegValue = ioread16(base + 0x2);
+ 		RegValue = ioread16(base + 0x0);
+@@ -683,8 +687,26 @@ stmmac_probe_config_dt(struct platform_device *pdev, u8 *mac)
+ 		iowrite16(RegValue, base + 0x0);
+ 		while (RegValue & BIT(15))
+ 			RegValue = ioread16(base + 0x0);
+-		RegValue &= ~(BIT(12));
+-		iowrite16(RegValue, base + 0x0);
++
++		if (!sgmii_an) {
++			/* Disable auto-negotiation */
++			RegValue &= ~(BIT(12));
++			iowrite16(RegValue, base + 0x0);
++		} else {
++			/* Change control to MII CTRL1 */
++			iowrite16((u16)(SR_MII_CTRL1 >> 9), base + IND_AC_INDX);
++
++			/* Set PCS_Mode to SGMII */
++			RegValue = ioread16(base + 0x2);
++			RegValue &= ~GENMASK(2,1);
++			RegValue |= 0x04;
++			iowrite16(RegValue, base + 0x2);
++
++			/* Set auto speed change */
++			RegValue = ioread16(base + 0x0);
++			RegValue |= BIT(9);
++			iowrite16(RegValue, base + 0x0);
++		}
+ 	}
+ 
+ 	return plat;
+-- 
+2.43.0
+

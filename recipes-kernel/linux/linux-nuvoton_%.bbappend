@@ -27,8 +27,10 @@ SRC_URI:append = " file://0009-arm64-dts-nuvoton-Add-siox-gpio-node.patch"
 SRC_URI:append = " file://0001-stmmac-Add-eee-fixup-disable.patch"
 SRC_URI:append = " file://0002-net-ethernet-stmmac-add-sgmii-support.patch"
 SRC_URI:append = " file://0003-net-stmmac-Add-NCSI-support-for-STMMAC.patch"
-SRC_URI:append = " file://0004-net-ethernet-stmmac-add-sgmii-100-and-10-support.patch"
+#SRC_URI:append = " file://0004-net-ethernet-stmmac-add-sgmii-100-and-10-support.patch"
 SRC_URI:append = " file://0005-net-ethernet-stmmac-clearing-interrupt-status-while-.patch"
+SRC_URI:append = " file://0001-net-phy-realtek-add-soft_reset-operation-for-rtl8211.patch"
+SRC_URI:append = " file://0001-net-stmmac-support-sgmii-auto-negotiation-for-npcm.patch"
 
 # NPCM8XX FIU driver
 SRC_URI:append = " file://0001-spi-npcm-fiu-add-dual-and-quad-write-support.patch"

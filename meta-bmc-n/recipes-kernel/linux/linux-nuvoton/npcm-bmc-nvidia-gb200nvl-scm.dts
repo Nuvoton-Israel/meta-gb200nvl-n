@@ -113,7 +113,8 @@
 };
 
 &gmac0 {
-	phy-mode = "rgmii-id";
+	phy-mode = "sgmii";
+	npcm,sgmii-an;
 	snps,eee-force-disable;
 	status = "okay";
 };
@@ -205,14 +206,13 @@
 		spi-rx-bus-width = <4>;
 		spi-tx-bus-width = <4>;
 		reg = <0>;
-		spi-max-frequency = <5000000>;
 		partitions@80000000 {
 			compatible = "fixed-partitions";
 			#address-cells = <1>;
 			#size-cells = <1>;
 			bmc@0 {
 				label = "bmc";
-				reg = <0x00000000 0x04000000>;
+				reg = <0x00000000 0x40000000>;
 			};
 			u-boot@0 {
 				label = "u-boot";
@@ -236,8 +236,7 @@
 
 &fiu1 {
 	pinctrl-names = "default";
-	pinctrl-0 = <&spi1_pins
-		&spi1d23_pins>;
+	pinctrl-0 = <&spi1_pins>;
 	status = "okay";
 	spi-nor@0 {
 		compatible = "jedec,spi-nor";
@@ -246,23 +245,23 @@
 		spi-rx-bus-width = <2>;
 		spi-tx-bus-width = <2>;
 		reg = <0>;
-		spi-max-frequency = <5000000>;
-		partitions@A0000000 {
+		label = "config";
+		partitions@90000000 {
 			compatible = "fixed-partitions";
 			#address-cells = <1>;
 			#size-cells = <1>;
-            dummy@0 {
-                reg = <0x0 0x40000>;            // 256KB at offset 0
-                label = "dummy";
-            };
-            rwfs@40000 {
-                reg = <0x40000 0x1000000>;      // 16MB at offset 0x40000
-                label = "rwfs";
-            };
-            log@0x1040000 {
-                reg = <0x1040000 0x2800000>;    // 40MB at offset 0x1040000
-                label = "log";                  // Move log to EMMC, make this unused
-            };
+			qflash@0 {
+				label = "qflash";
+				reg = <0x00000000 0x04000000>;
+			};
+			rwfs@0 {
+				label = "rwfs";
+				reg = <0x00000000 0x01000000>;
+			};
+			log@0x01000000 {
+				label = "log";
+				reg = <0x01000000 0x03000000>;
+			};
 		};
 	};
 };
@@ -294,22 +293,6 @@
 	status = "okay";
 };
 
-&pcie {
-	/* used for e1000e PCI -> AXI window opening */
-	//dma-ranges = <0x02000000 0 0x00000000 0x0 0x00000000 0 0x40000000>;
-	//npcm-pci-ep-rst = <&gpio3 24 1>;
-	status = "okay";
-};
-
-&pcimbox1 {
-	status = "okay";
-};
-
-&pcimbox2 {
-	status = "okay";
-};
-
-
 &jtm1 {
 	status = "okay";
 };
@@ -322,10 +305,6 @@
 	status = "okay";
 };
 
-&adc {
-	#io-channel-cells = <1>;
-	status = "okay";
-};
 
 &watchdog1 {
 	status = "okay";
@@ -776,6 +755,7 @@
 
 &vcd {
 	status = "okay";
+	nuvoton,hsync-mode;
 };
 
 &ece {
