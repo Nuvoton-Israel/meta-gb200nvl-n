@@ -1,0 +1,35 @@
+Upstream-Status: Pending [Not submitted to upstream yet]
+
+From 5498d6d646f5f662c79b35466a4b6fc50a9fa793 Mon Sep 17 00:00:00 2001
+From: Joseph Liu <kwliu@nuvoton.com>
+Date: Wed, 19 Nov 2025 13:20:25 +0800
+Subject: [PATCH] drivers: net: stmmac: npcm: remove soft reset
+
+Signed-off-by: Joseph Liu <kwliu@nuvoton.com>
+---
+ drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c
+index 360cde750043..71782c9d2eef 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c
+@@ -674,12 +674,15 @@ stmmac_probe_config_dt(struct platform_device *pdev, u8 *mac)
+ 			sgmii_npcm = false;
+ 		}
+ 		iowrite16((u16)(SR_MII_CTRL >> 9), npcm_base + IND_AC_INDX);
++#if 0
+ 		RegValue = ioread16(npcm_base + 0x2);
+ 		RegValue = ioread16(npcm_base + 0x0);
+ 		RegValue |= BIT(15);
+ 		iowrite16(RegValue, npcm_base + 0x0);
+ 		while (RegValue & BIT(15))
+ 			RegValue = ioread16(npcm_base + 0x0);
++#endif
++		RegValue = ioread16(npcm_base + 0x0);
+ 		RegValue &= ~(BIT(12));
+ 		iowrite16(RegValue, npcm_base + 0x0);
+ 	}
+-- 
+2.43.0
+

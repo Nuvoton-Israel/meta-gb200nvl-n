@@ -70,15 +70,6 @@
 
 	leds {
 		compatible = "gpio-leds";
-		uid_led {
-			gpios = <&siox_gpio 27 GPIO_ACTIVE_LOW>;
-		};
-		fault_led {
-			gpios = <&siox_gpio 29 GPIO_ACTIVE_LOW>;
-		};
-		power_led {
-			gpios = <&siox_gpio 31 GPIO_ACTIVE_LOW>;
-		};
 
 		// Non-LEDs:
 		//   BMC_READY-O GPIO pin (not an LED) is being bound to the GPIO LED driver.
@@ -113,7 +104,8 @@
 };
 
 &gmac0 {
-	phy-mode = "rgmii-id";
+	phy-mode = "sgmii";
+	npcm,sgmii-an;
 	snps,eee-force-disable;
 	status = "okay";
 };
@@ -126,44 +118,6 @@
 	use-ncsi;
 };
 
-&siox_gpio {
-	status = "okay";
-	interrupt-controller;
-	#interrupt-cells = <2>;
-	gpio-line-names =
-	"","","","","","","","",
-	"","","","","","","","",
-	"RUN_POWER_FAULT_L-I","SYS_RST_IN_L-O","RUN_POWER_PG-I","PWR_BRAKE_L-O","SYS_RST_OUT_L-I","RUN_POWER_EN-O","L0L1_RST_REQ_OUT_L-I","SHDN_FORCE_L-O",
-	"L2_RST_REQ_OUT_L-I","SHDN_REQ_L-O","SHDN_OK_L-I","UID_LED_N-O","BMC_I2C1_FPGA_ALERT_L-I","SYS_FAULT_LED_N-O","BMC_I2C0_FPGA_ALERT_L-I","PWR_LED_N-O",
-	"FPGA_RSVD_FFU3-I","","FPGA_RSVD_FFU2-I","","FPGA_RSVD_FFU1-I","","FPGA_RSVD_FFU0-I","BMC_I2C_SSIF_ALERT_L-O",
-	"CPU_BOOT_DONE-I","JTAG_MUX_SELECT-O","SPI_BMC_FPGA_INT_L-I","RTC_CLR_L-O","THERM_BB_WARN_L-I","UART_MUX_SEL-O","THERM_BB_OVERT_L-I","",
-	"CPU0_UPHY3_PRSNT1_L-I","IOBRD0_RUN_POWER_EN-O","CPU0_UPHY3_PRSNT0_L-I","IOBRD1_RUN_POWER_EN-O","CPU0_UPHY2_PRSNT1_L-I","FPGA_RSVD_FFU4-O","CPU0_UPHY2_PRSNT0_L-I","FPGA_RSVD_FFU5-O",
-	"CPU0_UPHY1_PRSNT1_L-I","FPGA_RSVD_FFU6-O","CPU0_UPHY1_PRSNT0_L-I","FPGA_RSVD_FFU7-O","CPU0_UPHY0_PRSNT1_L-I","RSVD_NV_PLT_DETECT-O","CPU0_UPHY0_PRSNT0_L-I","SPI1_INT_L-O",
-	"CPU1_UPHY3_PRSNT1_L-I","","CPU1_UPHY3_PRSNT0_L-I","HMC_EROT_MUX_STATUS","CPU1_UPHY2_PRSNT1_L-I","","CPU1_UPHY2_PRSNT0_L-I","",
-	"CPU1_UPHY1_PRSNT1_L-I","","CPU1_UPHY1_PRSNT0_L-I","","CPU1_UPHY0_PRSNT1_L-I","","CPU1_UPHY0_PRSNT0_L-I","",
-	"FAN1_PRESENT_L-I","","FAN0_PRESENT_L-I","","","","IPEX_CABLE_PRSNT_L-I","",
-	"M2_1_PRSNT_L-I","","M2_0_PRSNT_L-I","","CPU1_UPHY4_PRSNT1_L-I","","CPU0_UPHY4_PRSNT0_L-I","",
-	"","","I2C_RTC_ALERT_L-I","","FAN7_PRESENT_L-I","","FAN6_PRESENT_L-I","",
-	"FAN5_PRESENT_L-I","","FAN4_PRESENT_L-I","","FAN3_PRESENT_L-I","","FAN2_PRESENT_L-I","",
-	"IOBRD0_IOX_INT_L-I","","IOBRD1_PRSNT_L-I","","IOBRD0_PRSNT_L-I","","IOBRD1_PWR_GOOD-I","",
-	"IOBRD0_PWR_GOOD-I","","","","","","FAN_FAIL_IN_L-I","",
-	"","","","","","","PDB_CABLE_PRESENT_L-I","",
-	"","","CHASSIS_PWR_BRK_L-I","","","","IOBRD1_IOX_INT_L-I","",
-	"10GBE_SMBALRT_L-I","","PCIE_WAKE_L-I","","I2C_M21_ALERT_L-I","","I2C_M20_ALERT_L-I","",
-	"TRAY_FAST_SHDN_L-I","","UID_BTN_N-I","","PWR_BTN_L-I","","PSU_SMB_ALERT_L-I","",
-	"","","","","NODE_LOC_ID[0]-I","","NODE_LOC_ID[1]-I","",
-	"NODE_LOC_ID[2]-I","","NODE_LOC_ID[3]-I","","NODE_LOC_ID[4]-I","","NODE_LOC_ID[5]-I","",
-	"FAN10_PRESENT_L-I","","FAN9_PRESENT_L-I","","FAN8_PRESENT_L-I","","FPGA1_READY_HMC-I","",
-	"DP_HPD-I","","HMC_I2C3_FPGA_ALERT_L-I","","HMC_I2C2_FPGA_ALERT_L-I","","FPGA0_READY_HMC-I","",
-	"","","","","","","","",
-	"LEAK_DETECT_ALERT_L-I","","MOD1_B2B_CABLE_PRESENT_L-I","","MOD1_CLINK_CABLE_PRESENT_L-I","","FAN11_PRESENT_L-I","",
-	"","","","","","","","",
-	"","","","","","","","",
-	"","","","","","","","",
-	"","","","","","","","",
-	"RSVD_SGPIO_IN_CRC[0]","RSVD_SGPIO_O_CRC[7]","RSVD_SGPIO_IN_CRC[1]","RSVD_SGPIO_O_CRC[6]","RSVD_SGPIO_IN_CRC[2]","RSVD_SGPIO_O_CRC[5]","RSVD_SGPIO_IN_CRC[3]","RSVD_SGPIO_O_CRC[4]",
-	"RSVD_SGPIO_IN_CRC[4]","RSVD_SGPIO_O_CRC[3]","RSVD_SGPIO_IN_CRC[5]","RSVD_SGPIO_O_CRC[2]","RSVD_SGPIO_IN_CRC[6]","RSVD_SGPIO_O_CRC[1]","RSVD_SGPIO_IN_CRC[7]","RSVD_SGPIO_O_CRC[0]";
-};
 
 &gcr {
 	mux-controller {
@@ -236,8 +190,7 @@
 
 &fiu1 {
 	pinctrl-names = "default";
-	pinctrl-0 = <&spi1_pins
-		&spi1d23_pins>;
+	pinctrl-0 = <&spi1_pins>;
 	status = "okay";
 	spi-nor@0 {
 		compatible = "jedec,spi-nor";
@@ -246,26 +199,27 @@
 		spi-rx-bus-width = <2>;
 		spi-tx-bus-width = <2>;
 		reg = <0>;
-		spi-max-frequency = <5000000>;
-		partitions@A0000000 {
+		label = "config";
+		partitions@90000000 {
 			compatible = "fixed-partitions";
 			#address-cells = <1>;
 			#size-cells = <1>;
-            dummy@0 {
-                reg = <0x0 0x40000>;            // 256KB at offset 0
-                label = "dummy";
-            };
-            rwfs@40000 {
-                reg = <0x40000 0x1000000>;      // 16MB at offset 0x40000
-                label = "rwfs";
-            };
-            log@0x1040000 {
-                reg = <0x1040000 0x2800000>;    // 40MB at offset 0x1040000
-                label = "log";                  // Move log to EMMC, make this unused
-            };
+			qflash@0 {
+				label = "qflash";
+				reg = <0x00000000 0x04000000>;
+			};
+			rwfs@0 {
+				label = "rwfs";
+				reg = <0x00000000 0x01000000>;
+			};
+			log@0x01000000 {
+				label = "log";
+				reg = <0x01000000 0x03000000>;
+			};
 		};
 	};
 };
+
 
 &fiu3 {
 	pinctrl-names = "default";
@@ -301,14 +255,6 @@
 	status = "okay";
 };
 
-&pcimbox1 {
-	status = "okay";
-};
-
-&pcimbox2 {
-	status = "okay";
-};
-
 
 &jtm1 {
 	status = "okay";
@@ -322,10 +268,7 @@
 	status = "okay";
 };
 
-&adc {
-	#io-channel-cells = <1>;
-	status = "okay";
-};
+
 
 &watchdog1 {
 	status = "okay";
@@ -551,7 +494,6 @@
 	clock-frequency = <400000>;
 	ssif-bmc@10 {
 		compatible = "ssif-bmc";
-		alert-gpio = <&siox_gpio 39 GPIO_ACTIVE_LOW>;
 		pulse_width_us = <5>;
 		timeout_ms = <4995>;
 		reg = <0x10>;
@@ -885,7 +827,7 @@
 	};
 
 	pspi_d0_slew: pspi-d0-slew {
-		pins = "GPIO18/PSPI_D0/SMB4B_SDA";
+		pins = "GPIO18/PSPI_DO/SMB4B_SDA";
 		slew-rate = <1>;
 	};
 

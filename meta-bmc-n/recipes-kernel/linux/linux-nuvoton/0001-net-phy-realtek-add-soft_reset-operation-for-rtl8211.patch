@@ -1,0 +1,29 @@
+Upstream-Status: Pending [Not submitted to upstream yet]
+
+From dd90d6ee17ae990f456f29fe41c5215a213f3f66 Mon Sep 17 00:00:00 2001
+From: Stanley Chu <yschu@nuvoton.com>
+Date: Tue, 14 Feb 2023 14:34:27 +0800
+Subject: [PATCH] net: phy: realtek: add soft_reset operation for rtl8211f
+
+add this to fix "Failed to reset the dma" issue on npcm845
+
+Signed-off-by: Stanley Chu <yschu@nuvoton.com>
+---
+ drivers/net/phy/realtek.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/net/phy/realtek.c b/drivers/net/phy/realtek.c
+index 3d99fd6664d7..29390d485469 100644
+--- a/drivers/net/phy/realtek.c
++++ b/drivers/net/phy/realtek.c
+@@ -931,6 +931,7 @@ static struct phy_driver realtek_drvs[] = {
+ 		.resume		= rtl821x_resume,
+ 		.read_page	= rtl821x_read_page,
+ 		.write_page	= rtl821x_write_page,
++		.soft_reset	= genphy_soft_reset,
+ 	}, {
+ 		PHY_ID_MATCH_EXACT(RTL_8211FVD_PHYID),
+ 		.name		= "RTL8211F-VD Gigabit Ethernet",
+-- 
+2.43.0
+
