@@ -1,0 +1,27 @@
+From 440c17c9aa2f9300ce4fdf9d57cfc61e674879b0 Mon Sep 17 00:00:00 2001
+From: krishna <krishnar@ami.com>
+Date: Wed, 5 Jan 2022 21:46:31 +0530
+Subject: [PATCH] Fixed PSU fan_target to control PSU fan speed
+
+Signed-off-by: krishna <krishnar@ami.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/hwmon/pmbus/pmbus_core.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/hwmon/pmbus/pmbus_core.c b/drivers/hwmon/pmbus/pmbus_core.c
+index f1c02e1a1ef3..a50cfd4577d9 100644
+--- a/drivers/hwmon/pmbus/pmbus_core.c
++++ b/drivers/hwmon/pmbus/pmbus_core.c
+@@ -2216,7 +2216,7 @@ static int pmbus_add_fan_ctrl(struct i2c_client *client,
+ 
+ 	sensor = pmbus_add_sensor(data, "fan", "target", index, page,
+ 				  0xff, PMBUS_VIRT_FAN_TARGET_1 + id, PSC_FAN,
+-				  false, false, true);
++				  false, false, false);
+ 
+ 	if (!sensor)
+ 		return -ENOMEM;
+-- 
+2.43.0
+

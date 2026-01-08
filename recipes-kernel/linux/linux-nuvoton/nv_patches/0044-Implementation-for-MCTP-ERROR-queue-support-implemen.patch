@@ -1,0 +1,4323 @@
+From 7573a876a11574d4ff1b7c8e7cd0aa1ef7dc098c Mon Sep 17 00:00:00 2001
+From: Marvin Lin <milkfafa@gmail.com>
+Date: Tue, 23 Dec 2025 17:24:03 +0800
+Subject: [PATCH] Implementation for MCTP ERROR queue support implementation
+
+ Application which use AF_MCTP socket can subscribe for POLLERROR events on
+ the socket. If there is driver level failure in mctp binding or mctp core,
+ these error will be reported on the socket. Previously these were silent
+ failures.
+
+Tested
+
+1. MCTP-USB binding error reporting
+2. MCTP-I2C binding error reporting
+3. Error reporting using device reset injection
+3. Fragmentation errors
+
+Signed-off-by: Rohit PAI <ropai@nvidia.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/net/mctp/Makefile                |    2 +
+ drivers/net/mctp/mctp-i2c-error-inject.c |  893 ++++++++++++++++++
+ drivers/net/mctp/mctp-i2c-error-inject.h |   89 ++
+ drivers/net/mctp/mctp-i2c-internal.h     |   58 ++
+ drivers/net/mctp/mctp-i2c.c              |   65 +-
+ drivers/net/mctp/mctp-usb-error-inject.c | 1046 ++++++++++++++++++++++
+ drivers/net/mctp/mctp-usb-error-inject.h |   89 ++
+ drivers/net/mctp/mctp-usb.c              |  225 ++++-
+ include/net/mctp.h                       |   43 +
+ include/uapi/linux/mctp.h                |   72 ++
+ net/mctp/Makefile                        |    2 +-
+ net/mctp/af_mctp.c                       |  253 +++++-
+ net/mctp/mctp-socket-error-inject.c      |  221 +++++
+ net/mctp/mctp-socket-error-inject.h      |   41 +
+ net/mctp/route.c                         |  699 ++++++++++++++-
+ 15 files changed, 3778 insertions(+), 20 deletions(-)
+ create mode 100644 drivers/net/mctp/mctp-i2c-error-inject.c
+ create mode 100644 drivers/net/mctp/mctp-i2c-error-inject.h
+ create mode 100644 drivers/net/mctp/mctp-i2c-internal.h
+ create mode 100644 drivers/net/mctp/mctp-usb-error-inject.c
+ create mode 100644 drivers/net/mctp/mctp-usb-error-inject.h
+ create mode 100644 net/mctp/mctp-socket-error-inject.c
+ create mode 100644 net/mctp/mctp-socket-error-inject.h
+
+diff --git a/drivers/net/mctp/Makefile b/drivers/net/mctp/Makefile
+index c36006849a1e..ac0ed27ad772 100644
+--- a/drivers/net/mctp/Makefile
++++ b/drivers/net/mctp/Makefile
+@@ -1,4 +1,6 @@
+ obj-$(CONFIG_MCTP_SERIAL) += mctp-serial.o
+ obj-$(CONFIG_MCTP_TRANSPORT_I2C) += mctp-i2c.o
++obj-$(CONFIG_MCTP_TRANSPORT_I2C) += mctp-i2c-error-inject.o
+ obj-$(CONFIG_MCTP_TRANSPORT_I3C) += mctp-i3c.o
+ obj-$(CONFIG_MCTP_TRANSPORT_USB) += mctp-usb.o
++obj-$(CONFIG_MCTP_TRANSPORT_USB) += mctp-usb-error-inject.o
+diff --git a/drivers/net/mctp/mctp-i2c-error-inject.c b/drivers/net/mctp/mctp-i2c-error-inject.c
+new file mode 100644
+index 000000000000..41bb0e117075
+--- /dev/null
++++ b/drivers/net/mctp/mctp-i2c-error-inject.c
+@@ -0,0 +1,893 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * MCTP I2C Error Injection Implementation
++ * 
++ * Provides debugfs-based error injection for testing MCTP error queue
++ * functionality over I2C binding.
++ * 
++ * Interface unified with USB error injection where applicable.
++ */
++
++#include <linux/module.h>
++#include <linux/debugfs.h>
++#include <linux/netdevice.h>
++#include <linux/i2c.h>
++#include <linux/random.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++#include <net/mctp.h>
++
++#include "mctp-i2c-error-inject.h"
++
++/* Constants from mctp-i2c.c */
++#define MCTP_I2C_MAXBLOCK 255
++#define MCTP_I2C_BUFSZ (3 + MCTP_I2C_MAXBLOCK + 1)
++
++/* Forward declaration */
++struct mctp_i2c_client;
++
++/* CRITICAL: This struct definition MUST match the one in mctp-i2c.c exactly!
++ * If you modify struct mctp_i2c_dev in mctp-i2c.c, you MUST update this copy.
++ * Mismatched struct layouts will cause memory corruption and kernel panics!
++ * 
++ * This is a complete copy of struct mctp_i2c_dev from mctp-i2c.c.
++ * We need this copy here because:
++ * 1. We cannot include mctp-i2c.c
++ * 2. We need to access struct members for error injection
++ * 3. mctp-i2c.c keeps its original definition (user requirement)
++ */
++struct mctp_i2c_dev {
++	struct net_device *ndev;
++	struct i2c_adapter *adapter;
++	struct mctp_i2c_client *client;
++	struct list_head list; /* For mctp_i2c_client.devs */
++
++	size_t rx_pos;
++	u8 rx_buffer[MCTP_I2C_BUFSZ];
++	struct completion rx_done;
++
++	struct task_struct *tx_thread;
++	wait_queue_head_t tx_wq;
++	struct sk_buff_head tx_queue;
++	u8 tx_scratch[MCTP_I2C_BUFSZ];
++
++	/* A fake entry in our tx queue to perform an unlock operation */
++	struct sk_buff unlock_marker;
++
++	/* Spinlock protects i2c_lock_count, release_count, allow_rx */
++	spinlock_t lock;
++	int i2c_lock_count;
++	int release_count;
++	/* Indicates that the netif is ready to receive incoming packets */
++	bool allow_rx;
++
++	/* Error injection support */
++	struct mctp_i2c_error_inject error_inject;
++	struct dentry *debugfs_dir;
++};
++
++/* Global debugfs root for all MCTP I2C error injection */
++static struct dentry *mctp_i2c_error_inject_root;
++
++/* Check if error should be injected based on mode and rate */
++static bool mctp_should_inject_error(struct mctp_i2c_error_inject *ei, u32 rate, u32 *count)
++{
++	bool inject = false;
++	
++	spin_lock_bh(&ei->lock);
++	
++	switch (ei->mode) {
++	case MCTP_ERR_MODE_ALWAYS:
++		inject = true;
++		break;
++		
++	case MCTP_ERR_MODE_RANDOM:
++		/* Random injection based on rate percentage */
++		inject = (prandom_u32_state(&ei->rng) % 100) < rate;
++		break;
++		
++	case MCTP_ERR_MODE_COUNT:
++		/* Inject for count packets, then stop */
++		if (*count > 0) {
++			(*count)--;
++			inject = true;
++		}
++		break;
++	}
++	
++	spin_unlock_bh(&ei->lock);
++	
++	return inject;
++}
++
++/* Check if packet matches EID filter */
++static bool mctp_error_inject_match_filter(struct mctp_i2c_error_inject *ei,
++					    struct sk_buff *skb)
++{
++	struct mctp_hdr *mh;
++	
++	if (!ei->eid_filter.enabled)
++		return true;
++	
++	mh = mctp_hdr(skb);
++	if (!mh)
++		return false;
++	
++	/* Check source EID */
++	if (ei->eid_filter.src_eid != 0 &&
++	    ei->eid_filter.src_eid != mh->src)
++		return false;
++	
++	/* Check dest EID */
++	if (ei->eid_filter.dest_eid != 0 &&
++	    ei->eid_filter.dest_eid != mh->dest)
++		return false;
++	
++	return true;
++}
++
++/**
++ * mctp_i2c_error_inject_tx - Inject TX error
++ * @midev: MCTP I2C device
++ * @skb: Packet being transmitted
++ *
++ * Returns: 0 for normal operation, negative error code to simulate failure
++ *
++ * Called before __i2c_transfer() to potentially inject a TX error.
++ * I2C transfer is synchronous, so there's only one injection point.
++ */
++int mctp_i2c_error_inject_tx(struct mctp_i2c_dev *midev, struct sk_buff *skb)
++{
++	struct mctp_i2c_error_inject *ei = &midev->error_inject;
++	struct mctp_hdr *mh;
++	
++	/* Early exit if TX error injection is disabled or code not set */
++	if (!ei->enable_tx || ei->i2c_tx_error_code == 0)
++		return 0;
++	
++	if (!mctp_error_inject_match_filter(ei, skb))
++		return 0;
++	
++	if (!mctp_should_inject_error(ei, ei->i2c_tx_error_rate,
++				      &ei->i2c_tx_inject_count))
++		return 0;
++	
++	/* Inject delay if configured */
++	if (ei->delay_ms > 0)
++		msleep(ei->delay_ms);
++	
++	/* Update statistics */
++	spin_lock_bh(&ei->lock);
++	ei->i2c_tx_errors_injected++;
++	ei->total_errors_injected++;
++	ei->total_packets_processed++;
++	spin_unlock_bh(&ei->lock);
++	
++	mh = mctp_hdr(skb);
++	
++	netdev_info(midev->ndev,
++		    "ERROR INJECTION: TX - error=%d, src_eid=%u, dest_eid=%u, "
++		    "total_injected=%u, mode=%s\n",
++		    ei->i2c_tx_error_code, mh->src, mh->dest,
++		    ei->i2c_tx_errors_injected,
++		    ei->mode == MCTP_ERR_MODE_ALWAYS ? "always" :
++		    ei->mode == MCTP_ERR_MODE_RANDOM ? "random" : "count");
++	
++	return -ei->i2c_tx_error_code;
++}
++EXPORT_SYMBOL_GPL(mctp_i2c_error_inject_tx);
++
++/**
++ * mctp_i2c_error_inject_fragment - Inject fragment errors
++ * @midev: MCTP I2C device
++ * @skb: Packet being processed
++ *
++ * Returns: 0 to pass packet through, 1 to drop packet
++ *
++ * This function can:
++ * 1. Drop fragments (simulates fragment loss)
++ * 2. Corrupt sequence numbers (simulates protocol errors)
++ * 3. Clear SOM flag (simulates missing start-of-message)
++ */
++int mctp_i2c_error_inject_fragment(struct mctp_i2c_dev *midev, struct sk_buff *skb)
++{
++	struct mctp_i2c_error_inject *ei = &midev->error_inject;
++	struct mctp_hdr *mh;
++	u8 flags;
++	u8 seq;
++	
++	/* Early exit if RX error injection disabled or no fragment injection enabled */
++	if (!ei->enable_rx || (!ei->enable_fragment_drop && !ei->enable_seq_corrupt && !ei->enable_som_clear))
++		return 0;
++	
++	mh = mctp_hdr(skb);
++	if (!mh)
++		return 0;
++	
++	flags = mh->flags_seq_tag & (MCTP_HDR_FLAG_SOM | MCTP_HDR_FLAG_EOM);
++	seq = (mh->flags_seq_tag >> MCTP_HDR_SEQ_SHIFT) & MCTP_HDR_SEQ_MASK;
++	
++	/* Single-packet message (SOM+EOM) - pass through (not a fragment) */
++	if (flags == (MCTP_HDR_FLAG_SOM | MCTP_HDR_FLAG_EOM))
++		return 0;
++	
++	if (!mctp_error_inject_match_filter(ei, skb))
++		return 0;
++	
++	/* ===== Injection Type 1: Clear SOM bit (first fragment) ===== */
++	if (ei->enable_som_clear && (flags & MCTP_HDR_FLAG_SOM)) {
++		mh->flags_seq_tag &= ~MCTP_HDR_FLAG_SOM;
++		
++		spin_lock_bh(&ei->lock);
++		ei->som_clears++;
++		ei->total_errors_injected++;
++		spin_unlock_bh(&ei->lock);
++		
++		netdev_info(midev->ndev,
++			    "ERROR INJECTION: SOM bit CLEARED (first fragment, src=%u, dest=%u, seq=%u)\n",
++			    mh->src, mh->dest, seq);
++		
++		return 0;  /* Pass through with corrupted SOM */
++	}
++	
++	/* ===== Injection Type 2: Corrupt sequence number (middle/end fragments) ===== */
++	if (ei->enable_seq_corrupt && !(flags & MCTP_HDR_FLAG_SOM)) {
++		u8 old_seq = seq;
++		u8 corrupted_seq = (seq + 1) & MCTP_HDR_SEQ_MASK;
++		
++		mh->flags_seq_tag &= ~(MCTP_HDR_SEQ_MASK << MCTP_HDR_SEQ_SHIFT);
++		mh->flags_seq_tag |= (corrupted_seq << MCTP_HDR_SEQ_SHIFT);
++		
++		spin_lock_bh(&ei->lock);
++		ei->seq_corruptions++;
++		ei->total_errors_injected++;
++		spin_unlock_bh(&ei->lock);
++		
++		netdev_info(midev->ndev,
++			    "ERROR INJECTION: Sequence CORRUPTED (2nd+ fragment, src=%u, dest=%u, %u -> %u)\n",
++			    mh->src, mh->dest, old_seq, corrupted_seq);
++		
++		return 0;  /* Pass through with corrupted sequence */
++	}
++	
++	/* ===== Injection Type 3: Drop fragment (2nd+ fragments) ===== */
++	if (ei->enable_fragment_drop && !(flags & MCTP_HDR_FLAG_SOM)) {
++		spin_lock_bh(&ei->lock);
++		ei->fragments_dropped++;
++		ei->total_errors_injected++;
++		spin_unlock_bh(&ei->lock);
++		
++		netdev_info(midev->ndev,
++			    "ERROR INJECTION: Fragment DROPPED (2nd+ fragment, src=%u, dest=%u, seq=%u)\n",
++			    mh->src, mh->dest, seq);
++		
++		return 1;  /* Drop this fragment */
++	}
++	
++	return 0; /* Pass through normally */
++}
++EXPORT_SYMBOL_GPL(mctp_i2c_error_inject_fragment);
++
++/* ===== Debugfs Interface - Unified with USB ===== */
++
++static struct mctp_i2c_dev *mctp_i2c_from_file(struct file *file)
++{
++	return file->f_inode->i_private;
++}
++
++/* enable_tx attribute */
++static ssize_t mctp_debugfs_enable_tx_read(struct file *file, char __user *userbuf,
++					   size_t count, loff_t *ppos)
++{
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file);
++	char buf[8];
++	int len;
++	
++	len = snprintf(buf, sizeof(buf), "%d\n", midev->error_inject.enable_tx);
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
++}
++
++static ssize_t mctp_debugfs_enable_tx_write(struct file *file, const char __user *userbuf,
++					    size_t count, loff_t *ppos)
++{
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file);
++	char buf[8];
++	bool enable;
++	int rc;
++	
++	if (count >= sizeof(buf))
++		return -EINVAL;
++	
++	if (copy_from_user(buf, userbuf, count))
++		return -EFAULT;
++	
++	buf[count] = '\0';
++	rc = kstrtobool(buf, &enable);
++	if (rc)
++		return rc;
++	
++	spin_lock_bh(&midev->error_inject.lock);
++	midev->error_inject.enable_tx = enable;
++	spin_unlock_bh(&midev->error_inject.lock);
++	
++	netdev_info(midev->ndev, "TX error injection %s\n",
++		    enable ? "enabled" : "disabled");
++	
++	return count;
++}
++
++static const struct file_operations mctp_debugfs_enable_tx_fops = {
++	.owner = THIS_MODULE,
++	.read = mctp_debugfs_enable_tx_read,
++	.write = mctp_debugfs_enable_tx_write,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++/* enable_rx attribute */
++static ssize_t mctp_debugfs_enable_rx_read(struct file *file, char __user *userbuf,
++					   size_t count, loff_t *ppos)
++{
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file);
++	char buf[8];
++	int len;
++	
++	len = snprintf(buf, sizeof(buf), "%d\n", midev->error_inject.enable_rx);
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
++}
++
++static ssize_t mctp_debugfs_enable_rx_write(struct file *file, const char __user *userbuf,
++					    size_t count, loff_t *ppos)
++{
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file);
++	char buf[8];
++	bool enable;
++	int rc;
++	
++	if (count >= sizeof(buf))
++		return -EINVAL;
++	
++	if (copy_from_user(buf, userbuf, count))
++		return -EFAULT;
++	
++	buf[count] = '\0';
++	rc = kstrtobool(buf, &enable);
++	if (rc)
++		return rc;
++	
++	spin_lock_bh(&midev->error_inject.lock);
++	midev->error_inject.enable_rx = enable;
++	spin_unlock_bh(&midev->error_inject.lock);
++	
++	netdev_info(midev->ndev, "RX error injection %s\n",
++		    enable ? "enabled" : "disabled");
++	
++	return count;
++}
++
++static const struct file_operations mctp_debugfs_enable_rx_fops = {
++	.owner = THIS_MODULE,
++	.read = mctp_debugfs_enable_rx_read,
++	.write = mctp_debugfs_enable_rx_write,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++/* mode attribute */
++static ssize_t mctp_debugfs_mode_read(struct file *file, char __user *userbuf,
++				      size_t count, loff_t *ppos)
++{
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file);
++	const char *mode_str;
++	char buf[16];
++	int len;
++	
++	switch (midev->error_inject.mode) {
++	case MCTP_ERR_MODE_ALWAYS:
++		mode_str = "always\n";
++		break;
++	case MCTP_ERR_MODE_RANDOM:
++		mode_str = "random\n";
++		break;
++	case MCTP_ERR_MODE_COUNT:
++		mode_str = "count\n";
++		break;
++	default:
++		mode_str = "unknown\n";
++		break;
++	}
++	
++	len = snprintf(buf, sizeof(buf), "%s", mode_str);
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
++}
++
++static ssize_t mctp_debugfs_mode_write(struct file *file, const char __user *userbuf,
++				       size_t count, loff_t *ppos)
++{
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file);
++	char buf[16];
++	
++	if (count >= sizeof(buf))
++		return -EINVAL;
++	
++	if (copy_from_user(buf, userbuf, count))
++		return -EFAULT;
++	
++	buf[count] = '\0';
++	
++	spin_lock_bh(&midev->error_inject.lock);
++	
++	if (strncmp(buf, "always", 6) == 0)
++		midev->error_inject.mode = MCTP_ERR_MODE_ALWAYS;
++	else if (strncmp(buf, "random", 6) == 0)
++		midev->error_inject.mode = MCTP_ERR_MODE_RANDOM;
++	else if (strncmp(buf, "count", 5) == 0)
++		midev->error_inject.mode = MCTP_ERR_MODE_COUNT;
++	else {
++		spin_unlock_bh(&midev->error_inject.lock);
++		return -EINVAL;
++	}
++	
++	spin_unlock_bh(&midev->error_inject.lock);
++	
++	return count;
++}
++
++static const struct file_operations mctp_debugfs_mode_fops = {
++	.owner = THIS_MODULE,
++	.read = mctp_debugfs_mode_read,
++	.write = mctp_debugfs_mode_write,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++/* Generic u32 read/write helpers */
++#define MCTP_DEBUGFS_U32_DEFINE(name, field) \
++static ssize_t mctp_debugfs_##name##_read(struct file *file, char __user *userbuf, \
++					  size_t count, loff_t *ppos) \
++{ \
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file); \
++	char buf[32]; \
++	int len; \
++	\
++	len = snprintf(buf, sizeof(buf), "%u\n", midev->error_inject.field); \
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len); \
++} \
++\
++static ssize_t mctp_debugfs_##name##_write(struct file *file, const char __user *userbuf, \
++					   size_t count, loff_t *ppos) \
++{ \
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file); \
++	char buf[32]; \
++	u32 val; \
++	int rc; \
++	\
++	if (count >= sizeof(buf)) \
++		return -EINVAL; \
++	\
++	if (copy_from_user(buf, userbuf, count)) \
++		return -EFAULT; \
++	\
++	buf[count] = '\0'; \
++	rc = kstrtou32(buf, 0, &val); \
++	if (rc) \
++		return rc; \
++	\
++	spin_lock_bh(&midev->error_inject.lock); \
++	midev->error_inject.field = val; \
++	spin_unlock_bh(&midev->error_inject.lock); \
++	\
++	return count; \
++} \
++\
++static const struct file_operations mctp_debugfs_##name##_fops = { \
++	.owner = THIS_MODULE, \
++	.read = mctp_debugfs_##name##_read, \
++	.write = mctp_debugfs_##name##_write, \
++	.open = simple_open, \
++	.llseek = default_llseek, \
++};
++
++/* Generic int read/write helpers (for error codes) */
++#define MCTP_DEBUGFS_INT_DEFINE(name, field) \
++static ssize_t mctp_debugfs_##name##_read(struct file *file, char __user *userbuf, \
++					  size_t count, loff_t *ppos) \
++{ \
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file); \
++	char buf[32]; \
++	int len; \
++	\
++	len = snprintf(buf, sizeof(buf), "%d\n", midev->error_inject.field); \
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len); \
++} \
++\
++static ssize_t mctp_debugfs_##name##_write(struct file *file, const char __user *userbuf, \
++					   size_t count, loff_t *ppos) \
++{ \
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file); \
++	char buf[32]; \
++	int val; \
++	int rc; \
++	\
++	if (count >= sizeof(buf)) \
++		return -EINVAL; \
++	\
++	if (copy_from_user(buf, userbuf, count)) \
++		return -EFAULT; \
++	\
++	buf[count] = '\0'; \
++	rc = kstrtoint(buf, 0, &val); \
++	if (rc) \
++		return rc; \
++	\
++	spin_lock_bh(&midev->error_inject.lock); \
++	midev->error_inject.field = val; \
++	spin_unlock_bh(&midev->error_inject.lock); \
++	\
++	return count; \
++} \
++\
++static const struct file_operations mctp_debugfs_##name##_fops = { \
++	.owner = THIS_MODULE, \
++	.read = mctp_debugfs_##name##_read, \
++	.write = mctp_debugfs_##name##_write, \
++	.open = simple_open, \
++	.llseek = default_llseek, \
++};
++
++/* Generic bool read/write helpers */
++#define MCTP_DEBUGFS_BOOL_DEFINE(name, field) \
++static ssize_t mctp_debugfs_##name##_read(struct file *file, char __user *userbuf, \
++					  size_t count, loff_t *ppos) \
++{ \
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file); \
++	char buf[8]; \
++	int len; \
++	\
++	len = snprintf(buf, sizeof(buf), "%d\n", midev->error_inject.field ? 1 : 0); \
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len); \
++} \
++\
++static ssize_t mctp_debugfs_##name##_write(struct file *file, const char __user *userbuf, \
++					   size_t count, loff_t *ppos) \
++{ \
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file); \
++	char buf[8]; \
++	int val; \
++	int rc; \
++	\
++	if (count >= sizeof(buf)) \
++		return -EINVAL; \
++	\
++	if (copy_from_user(buf, userbuf, count)) \
++		return -EFAULT; \
++	\
++	buf[count] = '\0'; \
++	rc = kstrtoint(buf, 0, &val); \
++	if (rc) \
++		return rc; \
++	\
++	spin_lock_bh(&midev->error_inject.lock); \
++	midev->error_inject.field = (val != 0); \
++	spin_unlock_bh(&midev->error_inject.lock); \
++	\
++	return count; \
++} \
++\
++static const struct file_operations mctp_debugfs_##name##_fops = { \
++	.owner = THIS_MODULE, \
++	.read = mctp_debugfs_##name##_read, \
++	.write = mctp_debugfs_##name##_write, \
++	.open = simple_open, \
++	.llseek = default_llseek, \
++};
++
++/* Define all the file operations */
++MCTP_DEBUGFS_INT_DEFINE(i2c_tx_error_code, i2c_tx_error_code)
++MCTP_DEBUGFS_U32_DEFINE(i2c_tx_error_rate, i2c_tx_error_rate)
++MCTP_DEBUGFS_BOOL_DEFINE(enable_fragment_drop, enable_fragment_drop)
++MCTP_DEBUGFS_BOOL_DEFINE(enable_seq_corrupt, enable_seq_corrupt)
++MCTP_DEBUGFS_BOOL_DEFINE(enable_som_clear, enable_som_clear)
++MCTP_DEBUGFS_U32_DEFINE(delay_ms, delay_ms)
++
++/* EID filter attributes */
++#define MCTP_DEBUGFS_U8_DEFINE(name, field) \
++static ssize_t mctp_debugfs_##name##_read(struct file *file, char __user *userbuf, \
++					  size_t count, loff_t *ppos) \
++{ \
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file); \
++	char buf[8]; \
++	int len; \
++	\
++	len = snprintf(buf, sizeof(buf), "%u\n", midev->error_inject.eid_filter.field); \
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len); \
++} \
++\
++static ssize_t mctp_debugfs_##name##_write(struct file *file, const char __user *userbuf, \
++					   size_t count, loff_t *ppos) \
++{ \
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file); \
++	char buf[8]; \
++	u8 val; \
++	int rc; \
++	\
++	if (count >= sizeof(buf)) \
++		return -EINVAL; \
++	\
++	if (copy_from_user(buf, userbuf, count)) \
++		return -EFAULT; \
++	\
++	buf[count] = '\0'; \
++	rc = kstrtou8(buf, 0, &val); \
++	if (rc) \
++		return rc; \
++	\
++	spin_lock_bh(&midev->error_inject.lock); \
++	midev->error_inject.eid_filter.field = val; \
++	spin_unlock_bh(&midev->error_inject.lock); \
++	\
++	return count; \
++} \
++\
++static const struct file_operations mctp_debugfs_##name##_fops = { \
++	.owner = THIS_MODULE, \
++	.read = mctp_debugfs_##name##_read, \
++	.write = mctp_debugfs_##name##_write, \
++	.open = simple_open, \
++	.llseek = default_llseek, \
++};
++
++static ssize_t mctp_debugfs_eid_filter_enable_read(struct file *file, char __user *userbuf,
++						   size_t count, loff_t *ppos)
++{
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file);
++	char buf[8];
++	int len;
++	
++	len = snprintf(buf, sizeof(buf), "%d\n", midev->error_inject.eid_filter.enabled);
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
++}
++
++static ssize_t mctp_debugfs_eid_filter_enable_write(struct file *file, const char __user *userbuf,
++						    size_t count, loff_t *ppos)
++{
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file);
++	char buf[8];
++	bool enable;
++	int rc;
++	
++	if (count >= sizeof(buf))
++		return -EINVAL;
++	
++	if (copy_from_user(buf, userbuf, count))
++		return -EFAULT;
++	
++	buf[count] = '\0';
++	rc = kstrtobool(buf, &enable);
++	if (rc)
++		return rc;
++	
++	spin_lock_bh(&midev->error_inject.lock);
++	midev->error_inject.eid_filter.enabled = enable;
++	spin_unlock_bh(&midev->error_inject.lock);
++	
++	return count;
++}
++
++static const struct file_operations mctp_debugfs_eid_filter_enable_fops = {
++	.owner = THIS_MODULE,
++	.read = mctp_debugfs_eid_filter_enable_read,
++	.write = mctp_debugfs_eid_filter_enable_write,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++MCTP_DEBUGFS_U8_DEFINE(eid_filter_src_eid, src_eid)
++MCTP_DEBUGFS_U8_DEFINE(eid_filter_dest_eid, dest_eid)
++MCTP_DEBUGFS_U8_DEFINE(eid_filter_msg_type, msg_type)
++
++/* stats attribute (read-only) - unified with USB */
++static ssize_t mctp_debugfs_stats_read(struct file *file, char __user *userbuf,
++				       size_t count, loff_t *ppos)
++{
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file);
++	struct mctp_i2c_error_inject *ei = &midev->error_inject;
++	char *buf;
++	int len = 0;
++	ssize_t ret;
++	
++	buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++	
++	spin_lock_bh(&ei->lock);
++	
++	len += snprintf(buf + len, PAGE_SIZE - len, "enable_tx: %d\n", ei->enable_tx);
++	len += snprintf(buf + len, PAGE_SIZE - len, "enable_rx: %d\n", ei->enable_rx);
++	len += snprintf(buf + len, PAGE_SIZE - len, "mode: %s\n",
++			ei->mode == MCTP_ERR_MODE_ALWAYS ? "always" :
++			ei->mode == MCTP_ERR_MODE_RANDOM ? "random" : "count");
++	len += snprintf(buf + len, PAGE_SIZE - len, "i2c_tx_errors_injected: %u\n",
++			ei->i2c_tx_errors_injected);
++	len += snprintf(buf + len, PAGE_SIZE - len, "fragments_dropped: %u\n",
++			ei->fragments_dropped);
++	len += snprintf(buf + len, PAGE_SIZE - len, "seq_corruptions: %u\n",
++			ei->seq_corruptions);
++	len += snprintf(buf + len, PAGE_SIZE - len, "som_clears: %u\n",
++			ei->som_clears);
++	len += snprintf(buf + len, PAGE_SIZE - len, "total_packets_processed: %llu\n",
++			ei->total_packets_processed);
++	len += snprintf(buf + len, PAGE_SIZE - len, "total_errors_injected: %llu\n",
++			ei->total_errors_injected);
++	
++	spin_unlock_bh(&ei->lock);
++	
++	ret = simple_read_from_buffer(userbuf, count, ppos, buf, len);
++	kfree(buf);
++	
++	return ret;
++}
++
++static const struct file_operations mctp_debugfs_stats_fops = {
++	.owner = THIS_MODULE,
++	.read = mctp_debugfs_stats_read,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++/* reset attribute (write-only) - unified with USB */
++static ssize_t mctp_debugfs_reset_write(struct file *file, const char __user *userbuf,
++					size_t count, loff_t *ppos)
++{
++	struct mctp_i2c_dev *midev = mctp_i2c_from_file(file);
++	struct mctp_i2c_error_inject *ei = &midev->error_inject;
++	char buf[8];
++	int val;
++	int rc;
++	
++	if (count >= sizeof(buf))
++		return -EINVAL;
++	
++	if (copy_from_user(buf, userbuf, count))
++		return -EFAULT;
++	
++	buf[count] = '\0';
++	rc = kstrtoint(buf, 0, &val);
++	if (rc)
++		return rc;
++	
++	if (val != 1)
++		return -EINVAL;
++	
++	spin_lock_bh(&ei->lock);
++	
++	/* Reset all state */
++	ei->enable_tx = false;
++	ei->enable_rx = false;
++	ei->mode = MCTP_ERR_MODE_ALWAYS;
++	ei->i2c_tx_error_code = 0;
++	ei->i2c_tx_error_rate = 0;
++	ei->i2c_tx_inject_count = 0;
++	ei->enable_fragment_drop = false;
++	ei->enable_seq_corrupt = false;
++	ei->enable_som_clear = false;
++	ei->delay_ms = 0;
++	ei->eid_filter.enabled = false;
++	ei->eid_filter.src_eid = 0;
++	ei->eid_filter.dest_eid = 0;
++	ei->eid_filter.msg_type = 0;
++	
++	/* Reset statistics */
++	ei->i2c_tx_errors_injected = 0;
++	ei->fragments_dropped = 0;
++	ei->seq_corruptions = 0;
++	ei->som_clears = 0;
++	ei->total_packets_processed = 0;
++	ei->total_errors_injected = 0;
++	
++	spin_unlock_bh(&ei->lock);
++	
++	netdev_info(midev->ndev, "Error injection reset\n");
++	
++	return count;
++}
++
++static const struct file_operations mctp_debugfs_reset_fops = {
++	.owner = THIS_MODULE,
++	.write = mctp_debugfs_reset_write,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++/**
++ * mctp_i2c_error_inject_init - Initialize per-device error injection
++ * @midev: MCTP I2C device
++ *
++ * Creates debugfs directory and files for this device
++ */
++void mctp_i2c_error_inject_init(struct mctp_i2c_dev *midev)
++{
++	struct dentry *dir, *eid_dir;
++	struct mctp_i2c_error_inject *ei = &midev->error_inject;
++	
++	/* Initialize error injection state */
++	spin_lock_init(&ei->lock);
++	prandom_seed_state(&ei->rng, (u64)jiffies);
++	ei->enable_tx = false;
++	ei->enable_rx = false;
++	ei->mode = MCTP_ERR_MODE_ALWAYS;
++	/* All other fields are zero-initialized */
++	
++	if (!mctp_i2c_error_inject_root)
++		return;
++	
++	/* Create per-device debugfs directory */
++	dir = debugfs_create_dir(netdev_name(midev->ndev), mctp_i2c_error_inject_root);
++	if (IS_ERR_OR_NULL(dir))
++		return;
++	
++	midev->debugfs_dir = dir;
++	
++	/* Create error injection files - unified with USB */
++	debugfs_create_file("enable_tx", 0600, dir, midev, &mctp_debugfs_enable_tx_fops);
++	debugfs_create_file("enable_rx", 0600, dir, midev, &mctp_debugfs_enable_rx_fops);
++	debugfs_create_file("mode", 0600, dir, midev, &mctp_debugfs_mode_fops);
++	debugfs_create_file("i2c_tx_error_code", 0600, dir, midev, &mctp_debugfs_i2c_tx_error_code_fops);
++	debugfs_create_file("i2c_tx_error_rate", 0600, dir, midev, &mctp_debugfs_i2c_tx_error_rate_fops);
++	debugfs_create_file("enable_fragment_drop", 0600, dir, midev, &mctp_debugfs_enable_fragment_drop_fops);
++	debugfs_create_file("enable_seq_corrupt", 0600, dir, midev, &mctp_debugfs_enable_seq_corrupt_fops);
++	debugfs_create_file("enable_som_clear", 0600, dir, midev, &mctp_debugfs_enable_som_clear_fops);
++	debugfs_create_file("delay_ms", 0600, dir, midev, &mctp_debugfs_delay_ms_fops);
++	debugfs_create_file("stats", 0400, dir, midev, &mctp_debugfs_stats_fops);
++	debugfs_create_file("reset", 0200, dir, midev, &mctp_debugfs_reset_fops);
++	
++	/* Create eid_filter subdirectory - unified with USB */
++	eid_dir = debugfs_create_dir("eid_filter", dir);
++	if (!IS_ERR_OR_NULL(eid_dir)) {
++		debugfs_create_file("enable", 0600, eid_dir, midev, &mctp_debugfs_eid_filter_enable_fops);
++		debugfs_create_file("src_eid", 0600, eid_dir, midev, &mctp_debugfs_eid_filter_src_eid_fops);
++		debugfs_create_file("dest_eid", 0600, eid_dir, midev, &mctp_debugfs_eid_filter_dest_eid_fops);
++		debugfs_create_file("msg_type", 0600, eid_dir, midev, &mctp_debugfs_eid_filter_msg_type_fops);
++	}
++}
++EXPORT_SYMBOL_GPL(mctp_i2c_error_inject_init);
++
++/**
++ * mctp_i2c_error_inject_cleanup - Cleanup per-device error injection
++ * @midev: MCTP I2C device
++ */
++void mctp_i2c_error_inject_cleanup(struct mctp_i2c_dev *midev)
++{
++	debugfs_remove_recursive(midev->debugfs_dir);
++	midev->debugfs_dir = NULL;
++}
++EXPORT_SYMBOL_GPL(mctp_i2c_error_inject_cleanup);
++
++/**
++ * mctp_i2c_error_inject_module_init - Initialize global error injection
++ *
++ * Creates root debugfs directory for MCTP I2C error injection
++ */
++int mctp_i2c_error_inject_module_init(void)
++{
++	mctp_i2c_error_inject_root = debugfs_create_dir("mctp_i2c", NULL);
++	if (IS_ERR_OR_NULL(mctp_i2c_error_inject_root)) {
++		pr_warn("MCTP I2C: Failed to create debugfs root, error injection disabled\n");
++		mctp_i2c_error_inject_root = NULL;
++		return -ENODEV;
++	}
++	
++	pr_info("MCTP I2C Error Injection enabled\n");
++	return 0;
++}
++EXPORT_SYMBOL_GPL(mctp_i2c_error_inject_module_init);
++
++/**
++ * mctp_i2c_error_inject_module_exit - Cleanup global error injection
++ */
++void mctp_i2c_error_inject_module_exit(void)
++{
++	debugfs_remove_recursive(mctp_i2c_error_inject_root);
++	mctp_i2c_error_inject_root = NULL;
++}
++EXPORT_SYMBOL_GPL(mctp_i2c_error_inject_module_exit);
+diff --git a/drivers/net/mctp/mctp-i2c-error-inject.h b/drivers/net/mctp/mctp-i2c-error-inject.h
+new file mode 100644
+index 000000000000..b580cc329446
+--- /dev/null
++++ b/drivers/net/mctp/mctp-i2c-error-inject.h
+@@ -0,0 +1,89 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * MCTP I2C Error Injection Infrastructure
++ * 
++ * Provides debugfs-based error injection for testing MCTP error queue
++ * functionality over I2C binding.
++ */
++
++#ifndef __MCTP_I2C_ERROR_INJECT_H
++#define __MCTP_I2C_ERROR_INJECT_H
++
++#include <linux/types.h>
++#include <linux/skbuff.h>
++#include <linux/random.h>
++#include <linux/spinlock.h>
++#include <linux/i2c.h>
++#include <linux/netdevice.h>
++#include <linux/completion.h>
++#include <linux/kthread.h>
++#include <linux/debugfs.h>
++
++/* Forward declarations */
++struct dentry;
++struct mctp_i2c_client;
++
++/* Error injection modes - unified with USB */
++enum mctp_error_inject_mode {
++	MCTP_ERR_MODE_ALWAYS,
++	MCTP_ERR_MODE_RANDOM,
++	MCTP_ERR_MODE_COUNT
++};
++
++/* Error injection control structure - unified with USB where possible */
++struct mctp_i2c_error_inject {
++	bool enable_tx;  /* TX error injection enable */
++	bool enable_rx;  /* RX/fragment error injection enable */
++	enum mctp_error_inject_mode mode;
++	
++	/* TX injection - I2C only has one synchronous path */
++	int i2c_tx_error_code;   /* Error code to inject (ENXIO, EAGAIN, EBUSY, etc.) */
++	u32 i2c_tx_error_rate;   /* Percentage (0-100) or count */
++	u32 i2c_tx_inject_count; /* Counter for count mode */
++	u32 i2c_tx_errors_injected;
++	
++	/* Fragment injection - same as USB */
++	bool enable_fragment_drop;      /* Drop 2nd+ fragments */
++	bool enable_seq_corrupt;        /* Corrupt sequence number in middle/end fragments */
++	bool enable_som_clear;          /* Clear SOM bit in first fragment */
++	u32 fragments_dropped;
++	u32 seq_corruptions;
++	u32 som_clears;
++	
++	/* Delay injection */
++	u32 delay_ms;
++	
++	/* EID filtering - unified with USB */
++	struct {
++		bool enabled;
++		u8 src_eid;      /* 0 = any */
++		u8 dest_eid;     /* 0 = any */
++		u8 msg_type;     /* 0 = any */
++	} eid_filter;
++	
++	/* Statistics */
++	u64 total_packets_processed;
++	u64 total_errors_injected;
++	
++	/* RNG state */
++	struct rnd_state rng;
++	spinlock_t lock;
++};
++
++/* Forward declaration - full definition in mctp-i2c.c */
++struct mctp_i2c_dev;
++
++/* Module init/exit functions */
++int mctp_i2c_error_inject_module_init(void);
++void mctp_i2c_error_inject_module_exit(void);
++
++/* Public API for main driver */
++void mctp_i2c_error_inject_init(struct mctp_i2c_dev *midev);
++void mctp_i2c_error_inject_cleanup(struct mctp_i2c_dev *midev);
++
++int mctp_i2c_error_inject_tx(struct mctp_i2c_dev *midev, struct sk_buff *skb);
++int mctp_i2c_error_inject_fragment(struct mctp_i2c_dev *midev, struct sk_buff *skb);
++
++#endif /* __MCTP_I2C_ERROR_INJECT_H */
++
++
+diff --git a/drivers/net/mctp/mctp-i2c-internal.h b/drivers/net/mctp/mctp-i2c-internal.h
+new file mode 100644
+index 000000000000..1f2358007bea
+--- /dev/null
++++ b/drivers/net/mctp/mctp-i2c-internal.h
+@@ -0,0 +1,58 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * MCTP I2C Internal Definitions
++ * Shared between mctp-i2c.c and mctp-i2c-error-inject.c
++ */
++
++#ifndef __MCTP_I2C_INTERNAL_H
++#define __MCTP_I2C_INTERNAL_H
++
++#include <linux/i2c.h>
++#include <linux/netdevice.h>
++#include <linux/completion.h>
++#include <linux/skbuff.h>
++#include <linux/kthread.h>
++#include <linux/debugfs.h>
++
++#include "mctp-i2c-error-inject.h"
++
++/* Constants from mctp-i2c.c */
++#define MCTP_I2C_MAXBLOCK 255
++#define MCTP_I2C_BUFSZ (3 + MCTP_I2C_MAXBLOCK + 1)
++
++/* Forward declaration */
++struct mctp_i2c_client;
++
++/* The netdev structure. One of these per I2C adapter. */
++struct mctp_i2c_dev {
++	struct net_device *ndev;
++	struct i2c_adapter *adapter;
++	struct mctp_i2c_client *client;
++	struct list_head list; /* For mctp_i2c_client.devs */
++
++	size_t rx_pos;
++	u8 rx_buffer[MCTP_I2C_BUFSZ];
++	struct completion rx_done;
++
++	struct task_struct *tx_thread;
++	wait_queue_head_t tx_wq;
++	struct sk_buff_head tx_queue;
++	u8 tx_scratch[MCTP_I2C_BUFSZ];
++
++	/* A fake entry in our tx queue to perform an unlock operation */
++	struct sk_buff unlock_marker;
++
++	/* Spinlock protects i2c_lock_count, release_count, allow_rx */
++	spinlock_t lock;
++	int i2c_lock_count;
++	int release_count;
++	/* Indicates that the netif is ready to receive incoming packets */
++	bool allow_rx;
++
++	/* Error injection support */
++	struct mctp_i2c_error_inject error_inject;
++	struct dentry *debugfs_dir;
++};
++
++#endif /* __MCTP_I2C_INTERNAL_H */
++
+diff --git a/drivers/net/mctp/mctp-i2c.c b/drivers/net/mctp/mctp-i2c.c
+index 242868326c74..30d9a8d9d786 100644
+--- a/drivers/net/mctp/mctp-i2c.c
++++ b/drivers/net/mctp/mctp-i2c.c
+@@ -23,9 +23,11 @@
+ #include <linux/i2c-mux.h>
+ #include <linux/if_arp.h>
+ #include <linux/delay.h>
++
+ #include <net/mctp.h>
+ #include <net/mctpdevice.h>
+ 
++#include "mctp-i2c-error-inject.h"
+ /* byte_count is limited to u8 */
+ #define MCTP_I2C_MAXBLOCK 255
+ /* One byte is taken by source_slave */
+@@ -326,6 +328,20 @@ static int mctp_i2c_recv(struct mctp_i2c_dev *midev)
+ 	cb->halen = 1;
+ 	cb->haddr[0] = hdr->source_slave >> 1;
+ 
++	/* ERROR INJECTION POINT: Fragment drop/corruption
++	 * At this point:
++	 * - I2C header has been removed
++	 * - skb->data points to MCTP header
++	 * - Before packet sent to network stack
++	 * This is the ideal location to inject fragment errors
++	 */
++	if (mctp_i2c_error_inject_fragment(midev, skb)) {
++		/* Drop this fragment */
++		ndev->stats.rx_dropped++;
++		kfree_skb(skb);
++		return 0;
++	}
++
+ 	/* We need to ensure that the netif is not used once netdev
+ 	 * unregister occurs
+ 	 */
+@@ -550,7 +566,13 @@ static void mctp_i2c_xmit(struct mctp_i2c_dev *midev, struct sk_buff *skb)
+ 		/* no flow: full lock & unlock */
+ 		mctp_i2c_lock_nest(midev);
+ 		mctp_i2c_device_select(midev->client, midev);
+-		rc = mctp_i2c_transfer_with_retry(midev->adapter, &msg);
++		
++		/* ERROR INJECTION POINT: TX transfer (synchronous error) */
++		rc = mctp_i2c_error_inject_tx(midev, skb);
++		if (rc == 0)
++			rc = mctp_i2c_transfer_with_retry(midev->adapter, &msg);
++		
++
+ 		mctp_i2c_unlock_nest(midev);
+ 		break;
+ 
+@@ -564,7 +586,11 @@ static void mctp_i2c_xmit(struct mctp_i2c_dev *midev, struct sk_buff *skb)
+ 
+ 	case MCTP_I2C_TX_FLOW_EXISTING:
+ 		/* existing flow: we already have the lock; just tx */
+-		rc = mctp_i2c_transfer_with_retry(midev->adapter, &msg);
++		
++		/* ERROR INJECTION POINT: TX transfer (synchronous error) */
++		rc = mctp_i2c_error_inject_tx(midev, skb);
++		if (rc == 0)
++			rc = mctp_i2c_transfer_with_retry(midev->adapter, &msg);
+ 
+ 		/* on tx errors, the flow can no longer be considered valid */
+ 		if (rc)
+@@ -577,6 +603,23 @@ static void mctp_i2c_xmit(struct mctp_i2c_dev *midev, struct sk_buff *skb)
+ 	}
+ 
+ 	if (rc < 0) {
++		struct sock *sk;
++		
++		/* Report error to socket error queue
++		 * Look up socket and key. Key provides orig_payload for error reporting.
++		 * TX key existence proves this was our transaction.
++		 */
++		struct mctp_sk_key *key = NULL;
++		
++		sk = mctp_lookup_sock_for_error(skb, midev->ndev, NULL, &key);
++		
++		if (sk) {
++			/* Pass key so error report uses orig_payload (before fragmentation) */
++			mctp_queue_error(sk, skb, -rc, midev->ndev,
++					MCTP_DIR_TX, MCTP_BINDING_I2C, key);
++			sock_put(sk);
++		}
++		
+ 		stats->tx_errors++;
+ 	} else {
+ 		stats->tx_bytes += skb->len;
+@@ -835,6 +878,9 @@ static void mctp_i2c_unregister(struct mctp_i2c_dev *midev)
+ {
+ 	unsigned long flags;
+ 
++	/* Cleanup error injection */
++	mctp_i2c_error_inject_cleanup(midev);
++
+ 	/* Stop tx thread prior to unregister, it uses netif_() functions */
+ 	kthread_stop(midev->tx_thread);
+ 	midev->tx_thread = NULL;
+@@ -921,6 +967,9 @@ static int mctp_i2c_add_netdev(struct mctp_i2c_client *mcli,
+ 		goto err;
+ 	}
+ 
++	/* Setup error injection after netdev registration (debugfs needs the netdev name) */
++	mctp_i2c_error_inject_init(midev);
++
+ 	spin_lock_irqsave(&midev->lock, flags);
+ 	midev->allow_rx = false;
+ 	spin_unlock_irqrestore(&midev->lock, flags);
+@@ -1145,12 +1194,21 @@ static __init int mctp_i2c_mod_init(void)
+ 	int rc;
+ 
+ 	pr_info("MCTP I2C interface driver\n");
++	
++	/* Initialize error injection infrastructure */
++	rc = mctp_i2c_error_inject_module_init();
++	if (rc)
++		pr_warn("MCTP I2C: Error injection initialization failed, continuing without it\n");
++	
+ 	rc = i2c_add_driver(&mctp_i2c_driver);
+-	if (rc < 0)
++	if (rc < 0) {
++		mctp_i2c_error_inject_module_exit();
+ 		return rc;
++	}
+ 	rc = bus_register_notifier(&i2c_bus_type, &mctp_i2c_notifier);
+ 	if (rc < 0) {
+ 		i2c_del_driver(&mctp_i2c_driver);
++		mctp_i2c_error_inject_module_exit();
+ 		return rc;
+ 	}
+ 	return 0;
+@@ -1164,6 +1222,7 @@ static __exit void mctp_i2c_mod_exit(void)
+ 	if (rc < 0)
+ 		pr_warn("MCTP I2C could not unregister notifier, %d\n", rc);
+ 	i2c_del_driver(&mctp_i2c_driver);
++	mctp_i2c_error_inject_module_exit();
+ }
+ 
+ module_init(mctp_i2c_mod_init);
+diff --git a/drivers/net/mctp/mctp-usb-error-inject.c b/drivers/net/mctp/mctp-usb-error-inject.c
+new file mode 100644
+index 000000000000..a4e4f759d31a
+--- /dev/null
++++ b/drivers/net/mctp/mctp-usb-error-inject.c
+@@ -0,0 +1,1046 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * mctp-usb-error-inject.c - Error injection infrastructure for MCTP USB
++ *
++ * Copyright (C) 2024 Code Construct Pty Ltd
++ */
++
++#include <linux/module.h>
++#include <linux/netdevice.h>
++#include <linux/usb.h>
++#include <linux/usb/mctp-usb.h>
++#include <linux/debugfs.h>
++#include <linux/random.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++
++#include <net/mctp.h>
++
++#include "mctp-usb-error-inject.h"
++
++struct mctp_usb {
++	struct usb_device *usbdev;
++	struct usb_interface *intf;
++	bool stopped;
++
++	struct net_device *netdev;
++
++	u8 ep_in;
++	u8 ep_out;
++
++	struct usb_anchor rx_anchor;
++	struct usb_anchor tx_anchor;
++	/* number of urbs currently queued */
++	atomic_t rx_qlen, tx_qlen;
++
++	struct delayed_work rx_retry_work;
++
++	/* TX batching support - controlled via sysfs */
++	bool tx_batching_enabled;
++	
++	/* Error injection support */
++	struct mctp_error_inject error_inject;
++	struct dentry *debugfs_dir;
++};
++
++/* Global debugfs root directory */
++static struct dentry *mctp_usb_debugfs_root;
++
++/* ===== Error Injection Helper Functions ===== */
++
++/* Check if error should be injected based on mode and rate
++ * Note: Caller must check ei->enable_tx or ei->enable_rx before calling this
++ */
++static bool mctp_should_inject_error(struct mctp_error_inject *ei, u32 rate, u32 *count)
++{
++	bool inject = false;
++	
++	spin_lock_bh(&ei->lock);
++	
++	switch (ei->mode) {
++	case MCTP_ERR_MODE_ALWAYS:
++		inject = true;
++		break;
++		
++	case MCTP_ERR_MODE_RANDOM:
++		/* Random injection based on rate percentage */
++		inject = (prandom_u32_state(&ei->rng) % 100) < rate;
++		break;
++		
++	case MCTP_ERR_MODE_COUNT:
++		/* Inject for count packets, then stop */
++		if (*count > 0) {
++			(*count)--;
++			inject = true;
++		}
++		break;
++	}
++	
++	spin_unlock_bh(&ei->lock);
++	
++	return inject;
++}
++
++/* Check if packet matches EID filter */
++static bool mctp_error_inject_match_filter(struct mctp_error_inject *ei,
++                                           struct sk_buff *skb,
++                                           struct net_device *netdev)
++{
++	struct mctp_hdr *mh;
++	
++	if (!ei->eid_filter.enabled)
++		return true;  /* No filter, match all */
++	
++	/* Check if SKB has enough data for USB header + MCTP header */
++	if (skb->len < (sizeof(struct mctp_usb_hdr) + sizeof(struct mctp_hdr)))
++		return false;
++	
++	/*
++	 * Access MCTP header manually - SKB has USB header prepended at this point.
++	 * Cannot use mctp_hdr(skb) as it has WARN_ON check that expects MCTP header
++	 * at skb->data, but we have: [USB HDR][MCTP HDR][PAYLOAD]
++	 */
++	mh = (struct mctp_hdr *)(skb->data + sizeof(struct mctp_usb_hdr));
++	
++	/* Check source EID */
++	if (ei->eid_filter.src_eid != 0 &&
++	    ei->eid_filter.src_eid != mh->src) {
++		netdev_dbg(netdev,
++		          "Error injection: Packet filtered out (src EID %u != filter %u)\n",
++		          mh->src, ei->eid_filter.src_eid);
++		return false;
++	}
++	
++	/* Check dest EID */
++	if (ei->eid_filter.dest_eid != 0 &&
++	    ei->eid_filter.dest_eid != mh->dest) {
++		netdev_dbg(netdev,
++		          "Error injection: Packet filtered out (dest EID %u != filter %u)\n",
++		          mh->dest, ei->eid_filter.dest_eid);
++		return false;
++	}
++	
++	/* Packet matches filter */
++	netdev_dbg(netdev,
++	          "Error injection: Packet matches filter (src=%u, dest=%u)\n",
++	          mh->src, mh->dest);
++	
++	return true;
++}
++
++/* TX synchronous error injection (before URB submission) */
++int mctp_usb_error_inject_tx_sync(struct mctp_usb *mctp_usb, struct sk_buff *skb)
++{
++	struct mctp_error_inject *ei = &mctp_usb->error_inject;
++	struct mctp_hdr *mh;
++	
++	/* Early exit if TX error injection is disabled or sync code not set - zero overhead */
++	if (!ei->enable_tx || ei->urb_tx_sync_error_code == 0)
++		return 0;
++	
++	if (!mctp_error_inject_match_filter(ei, skb, mctp_usb->netdev))
++		return 0;
++	
++	if (!mctp_should_inject_error(ei, ei->urb_tx_error_rate,
++	                              &ei->urb_tx_sync_inject_count)) {
++		netdev_dbg(mctp_usb->netdev,
++		          "Error injection: TX URB submission (sync) - not injecting (mode/rate check)\n");
++		return 0;
++	}
++	
++	/* Inject delay if configured */
++	if (ei->delay_ms > 0) {
++		netdev_dbg(mctp_usb->netdev,
++		          "Error injection: Injecting %u ms delay\n",
++		          ei->delay_ms);
++		msleep(ei->delay_ms);
++	}
++	
++	/* Update statistics */
++	spin_lock_bh(&ei->lock);
++	ei->urb_tx_sync_errors_injected++;
++	ei->total_errors_injected++;
++	ei->total_packets_processed++;
++	spin_unlock_bh(&ei->lock);
++	
++	/* 
++	 * Access MCTP header manually - SKB has USB header prepended at this point.
++	 * Cannot use mctp_hdr(skb) as it has WARN_ON check that expects MCTP header
++	 * at skb->data, but we have: [USB HDR][MCTP HDR][PAYLOAD]
++	 */
++	mh = (struct mctp_hdr *)(skb->data + sizeof(struct mctp_usb_hdr));
++	
++	netdev_info(mctp_usb->netdev,
++	           "Error injection: TX URB submission failed (sync) - error=%d, src_eid=%u, dest_eid=%u, "
++	           "total_injected=%u, mode=%s\n",
++	           ei->urb_tx_sync_error_code, mh->src, mh->dest,
++	           ei->urb_tx_sync_errors_injected,
++	           ei->mode == MCTP_ERR_MODE_ALWAYS ? "always" :
++	           ei->mode == MCTP_ERR_MODE_RANDOM ? "random" : "count");
++	
++	return ei->urb_tx_sync_error_code;
++}
++EXPORT_SYMBOL_GPL(mctp_usb_error_inject_tx_sync);
++
++/* TX asynchronous error injection (URB completion) 
++ * Note: TX async injection happens at URB level, not packet level.
++ * With batching, a single URB may contain multiple packets from different transactions.
++ * Therefore, EID filtering is not applicable here - the error affects the entire URB.
++ */
++int mctp_usb_error_inject_tx_async(struct mctp_usb *mctp_usb,
++                                    int original_status)
++{
++	struct mctp_error_inject *ei = &mctp_usb->error_inject;
++	
++	/* Only inject if original status was success */
++	if (original_status != 0) {
++		netdev_dbg(mctp_usb->netdev,
++		          "Error injection: TX URB already has error status %d, not injecting\n",
++		          original_status);
++		return original_status;
++	}
++	
++	/* Early exit if TX error injection is disabled or async code not set - zero overhead */
++	if (!ei->enable_tx || ei->urb_tx_async_error_code == 0)
++		return original_status;
++	
++	/* Note: EID filtering is NOT checked for async errors because:
++	 * 1. URB may contain multiple packets (batching)
++	 * 2. Packets may have different source/dest EIDs
++	 * 3. Filtering happens at TX sync (before batching) where per-packet control is possible
++	 */
++	
++	if (!mctp_should_inject_error(ei, ei->urb_tx_error_rate,
++	                              &ei->urb_tx_async_inject_count)) {
++		netdev_dbg(mctp_usb->netdev,
++		          "Error injection: TX URB completion (async) - not injecting (mode/rate check)\n");
++		return original_status;
++	}
++	
++	/* Update statistics */
++	spin_lock_bh(&ei->lock);
++	ei->urb_tx_async_errors_injected++;
++	ei->total_errors_injected++;
++	spin_unlock_bh(&ei->lock);
++	
++	netdev_info(mctp_usb->netdev,
++	           "Error injection: TX URB completion failed (async) - error=%d, total_injected=%u, mode=%s (URB-level, may affect multiple packets)\n",
++	           ei->urb_tx_async_error_code,
++	           ei->urb_tx_async_errors_injected,
++	           ei->mode == MCTP_ERR_MODE_ALWAYS ? "always" :
++	           ei->mode == MCTP_ERR_MODE_RANDOM ? "random" : "count");
++	
++	return ei->urb_tx_async_error_code;
++}
++EXPORT_SYMBOL_GPL(mctp_usb_error_inject_tx_async);
++
++/* RX error injection */
++int mctp_usb_error_inject_rx(struct mctp_usb *mctp_usb, int original_status)
++{
++	struct mctp_error_inject *ei = &mctp_usb->error_inject;
++	
++	if (original_status != 0) {
++		netdev_dbg(mctp_usb->netdev,
++		          "Error injection: RX URB already has error status %d, not injecting\n",
++		          original_status);
++		return original_status;
++	}
++	
++	/* Early exit if RX error injection is disabled - zero overhead */
++	if (!ei->enable_rx || ei->urb_rx_error_code == 0)
++		return original_status;
++	
++	/* RX: Can't check EID filter yet as packet not parsed */
++	if (ei->eid_filter.enabled) {
++		netdev_dbg(mctp_usb->netdev,
++		          "Error injection: RX - EID filter enabled but cannot filter (packet not parsed yet)\n");
++	}
++	
++	if (!mctp_should_inject_error(ei, ei->urb_rx_error_rate,
++	                              &ei->urb_rx_inject_count)) {
++		netdev_dbg(mctp_usb->netdev,
++		          "Error injection: RX URB completion - not injecting (mode/rate check)\n");
++		return original_status;
++	}
++	
++	/* Update statistics */
++	spin_lock_bh(&ei->lock);
++	ei->urb_rx_errors_injected++;
++	ei->total_errors_injected++;
++	spin_unlock_bh(&ei->lock);
++	
++	netdev_info(mctp_usb->netdev,
++	           "Error injection: RX URB completion failed - error=%d, total_injected=%u, mode=%s\n",
++	           ei->urb_rx_error_code,
++	           ei->urb_rx_errors_injected,
++	           ei->mode == MCTP_ERR_MODE_ALWAYS ? "always" :
++	           ei->mode == MCTP_ERR_MODE_RANDOM ? "random" : "count");
++	
++	netdev_info(mctp_usb->netdev,
++	           "Error injection: RX packet will be DROPPED due to injected error\n");
++	
++	return ei->urb_rx_error_code;
++}
++EXPORT_SYMBOL_GPL(mctp_usb_error_inject_rx);
++
++/* Fragment error injection
++ * Integrated with RX error injection infrastructure:
++ * - Requires enable_rx to be set
++ * - Supports EID filtering (src_eid, dest_eid, msg_type)
++ * - Three injection modes:
++ *   1. enable_fragment_drop: Drop 2nd+ fragments (triggers reassembly timeout)
++ *   2. enable_seq_corrupt: Corrupt sequence number in middle/end fragments (triggers sequence error)
++ *   3. enable_som_clear: Clear SOM bit in first fragment (triggers missing SOM error)
++ * 
++ * Returns:
++ *   0 - Pass through (normally or with corruption)
++ *   1 - Drop this fragment
++ */
++int mctp_usb_error_inject_fragment(struct mctp_usb *mctp_usb, struct sk_buff *skb)
++{
++	struct mctp_error_inject *ei = &mctp_usb->error_inject;
++	struct mctp_hdr *mh;
++	u8 flags;
++	u8 msg_type;
++	u8 seq;
++	
++	/* Early exit if RX error injection disabled or no fragment injection enabled */
++	if (!ei->enable_rx || (!ei->enable_fragment_drop && !ei->enable_seq_corrupt && !ei->enable_som_clear))
++		return 0;
++	
++	/* Check if we have enough data for MCTP header + message type */
++	if (skb->len < sizeof(struct mctp_hdr) + 1)
++		return 0;
++	
++	/* Parse MCTP header (skb->data points to MCTP header after USB header removed) */
++	mh = (struct mctp_hdr *)skb->data;
++	flags = mh->flags_seq_tag & (MCTP_HDR_FLAG_SOM | MCTP_HDR_FLAG_EOM);
++	seq = (mh->flags_seq_tag >> 4) & 0x03;
++	
++	/* Single-packet message (SOM+EOM) - pass through (not a fragment) */
++	if (flags == (MCTP_HDR_FLAG_SOM | MCTP_HDR_FLAG_EOM))
++		return 0;
++	
++	/* Apply EID filtering if enabled */
++	if (ei->eid_filter.enabled) {
++		/* Check source EID filter */
++		if (ei->eid_filter.src_eid != 0 &&
++		    ei->eid_filter.src_eid != mh->src) {
++			netdev_dbg(mctp_usb->netdev,
++			          "Fragment injection: Packet filtered out (src EID %u != filter %u)\n",
++			          mh->src, ei->eid_filter.src_eid);
++			return 0;  /* Does not match filter, pass through */
++		}
++		
++		/* Check destination EID filter */
++		if (ei->eid_filter.dest_eid != 0 &&
++		    ei->eid_filter.dest_eid != mh->dest) {
++			netdev_dbg(mctp_usb->netdev,
++			          "Fragment injection: Packet filtered out (dest EID %u != filter %u)\n",
++			          mh->dest, ei->eid_filter.dest_eid);
++			return 0;  /* Does not match filter, pass through */
++		}
++		
++		/* Check message type filter (first byte after MCTP header) */
++		msg_type = *((u8 *)(skb->data + sizeof(struct mctp_hdr)));
++		if (ei->eid_filter.msg_type != 0 &&
++		    ei->eid_filter.msg_type != msg_type) {
++			netdev_dbg(mctp_usb->netdev,
++			          "Fragment injection: Packet filtered out (msg_type 0x%02x != filter 0x%02x)\n",
++			          msg_type, ei->eid_filter.msg_type);
++			return 0;  /* Does not match filter, pass through */
++		}
++		
++		netdev_dbg(mctp_usb->netdev,
++		          "Fragment injection: Packet MATCHES filter (src=%u, dest=%u, msg_type=0x%02x)\n",
++		          mh->src, mh->dest, msg_type);
++	}
++	
++	/* ===== Injection Type 1: Clear SOM bit (first fragment) ===== */
++	if (ei->enable_som_clear && (flags & MCTP_HDR_FLAG_SOM)) {
++		/* Clear the SOM bit in first fragment */
++		mh->flags_seq_tag &= ~MCTP_HDR_FLAG_SOM;
++		
++		spin_lock_bh(&ei->lock);
++		ei->som_clears++;
++		ei->total_errors_injected++;
++		spin_unlock_bh(&ei->lock);
++		
++		netdev_info(mctp_usb->netdev,
++		           "Error injection: SOM bit CLEARED (first fragment, src=%u, dest=%u, seq=%u)%s\n",
++		           mh->src, mh->dest, seq,
++		           ei->eid_filter.enabled ? " [EID filter ACTIVE]" : "");
++		
++		return 0;  /* Pass through with corrupted SOM */
++	}
++	
++	/* ===== Injection Type 2: Corrupt sequence number (middle/end fragments) ===== */
++	if (ei->enable_seq_corrupt && !(flags & MCTP_HDR_FLAG_SOM)) {
++		/* This is a middle or end fragment - corrupt the sequence number */
++		u8 corrupted_seq = (seq + 1) & 0x03;  /* Increment sequence (wrap at 4) */
++		
++		/* Clear old sequence and set corrupted one */
++		mh->flags_seq_tag &= ~(0x03 << 4);  /* Clear bits 4-5 */
++		mh->flags_seq_tag |= (corrupted_seq << 4);  /* Set corrupted sequence */
++		
++		spin_lock_bh(&ei->lock);
++		ei->seq_corruptions++;
++		ei->total_errors_injected++;
++		spin_unlock_bh(&ei->lock);
++		
++		netdev_info(mctp_usb->netdev,
++		           "Error injection: Sequence CORRUPTED (2nd+ fragment, src=%u, dest=%u, orig_seq=%u -> corrupted_seq=%u)%s\n",
++		           mh->src, mh->dest, seq, corrupted_seq,
++		           ei->eid_filter.enabled ? " [EID filter ACTIVE]" : "");
++		
++		return 0;  /* Pass through with corrupted sequence */
++	}
++	
++	/* ===== Injection Type 3: Drop fragment (2nd+ fragments) ===== */
++	if (ei->enable_fragment_drop && !(flags & MCTP_HDR_FLAG_SOM)) {
++		/* Drop this fragment (2nd onwards) */
++		spin_lock_bh(&ei->lock);
++		ei->fragments_dropped++;
++		ei->total_errors_injected++;
++		spin_unlock_bh(&ei->lock);
++		
++		netdev_info(mctp_usb->netdev,
++		           "Error injection: Fragment DROPPED (2nd+ fragment, src=%u, dest=%u, seq=%u)%s\n",
++		           mh->src, mh->dest, seq,
++		           ei->eid_filter.enabled ? " [EID filter ACTIVE]" : "");
++		
++		return 1;  /* Drop this fragment */
++	}
++	
++	/* No injection applied - pass through normally */
++	return 0;
++}
++EXPORT_SYMBOL_GPL(mctp_usb_error_inject_fragment);
++
++/* ===== Debugfs Interface ===== */
++
++/* Helper to get mctp_usb from file */
++static struct mctp_usb *mctp_usb_from_file(struct file *file)
++{
++	return file->f_inode->i_private;
++}
++
++/* enable_tx attribute */
++static ssize_t mctp_debugfs_enable_tx_read(struct file *file, char __user *userbuf,
++                                           size_t count, loff_t *ppos)
++{
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file);
++	char buf[8];
++	int len;
++	
++	len = snprintf(buf, sizeof(buf), "%d\n", mctp_usb->error_inject.enable_tx);
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
++}
++
++static ssize_t mctp_debugfs_enable_tx_write(struct file *file, const char __user *userbuf,
++                                            size_t count, loff_t *ppos)
++{
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file);
++	char buf[8];
++	bool enable;
++	int rc;
++	
++	if (count >= sizeof(buf))
++		return -EINVAL;
++	
++	if (copy_from_user(buf, userbuf, count))
++		return -EFAULT;
++	
++	buf[count] = '\0';
++	rc = kstrtobool(buf, &enable);
++	if (rc)
++		return rc;
++	
++	spin_lock_bh(&mctp_usb->error_inject.lock);
++	mctp_usb->error_inject.enable_tx = enable;
++	spin_unlock_bh(&mctp_usb->error_inject.lock);
++	
++	netdev_info(mctp_usb->netdev, "TX error injection %s\n",
++	           enable ? "enabled" : "disabled");
++	
++	return count;
++}
++
++static const struct file_operations mctp_debugfs_enable_tx_fops = {
++	.owner = THIS_MODULE,
++	.read = mctp_debugfs_enable_tx_read,
++	.write = mctp_debugfs_enable_tx_write,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++/* enable_rx attribute */
++static ssize_t mctp_debugfs_enable_rx_read(struct file *file, char __user *userbuf,
++                                           size_t count, loff_t *ppos)
++{
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file);
++	char buf[8];
++	int len;
++	
++	len = snprintf(buf, sizeof(buf), "%d\n", mctp_usb->error_inject.enable_rx);
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
++}
++
++static ssize_t mctp_debugfs_enable_rx_write(struct file *file, const char __user *userbuf,
++                                            size_t count, loff_t *ppos)
++{
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file);
++	char buf[8];
++	bool enable;
++	int rc;
++	
++	if (count >= sizeof(buf))
++		return -EINVAL;
++	
++	if (copy_from_user(buf, userbuf, count))
++		return -EFAULT;
++	
++	buf[count] = '\0';
++	rc = kstrtobool(buf, &enable);
++	if (rc)
++		return rc;
++	
++	spin_lock_bh(&mctp_usb->error_inject.lock);
++	mctp_usb->error_inject.enable_rx = enable;
++	spin_unlock_bh(&mctp_usb->error_inject.lock);
++	
++	netdev_info(mctp_usb->netdev, "RX error injection %s\n",
++	           enable ? "enabled" : "disabled");
++	
++	return count;
++}
++
++static const struct file_operations mctp_debugfs_enable_rx_fops = {
++	.owner = THIS_MODULE,
++	.read = mctp_debugfs_enable_rx_read,
++	.write = mctp_debugfs_enable_rx_write,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++/* mode attribute */
++static ssize_t mctp_debugfs_mode_read(struct file *file, char __user *userbuf,
++                                      size_t count, loff_t *ppos)
++{
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file);
++	const char *mode_str;
++	char buf[16];
++	int len;
++	
++	switch (mctp_usb->error_inject.mode) {
++	case MCTP_ERR_MODE_ALWAYS:
++		mode_str = "always\n";
++		break;
++	case MCTP_ERR_MODE_RANDOM:
++		mode_str = "random\n";
++		break;
++	case MCTP_ERR_MODE_COUNT:
++		mode_str = "count\n";
++		break;
++	default:
++		mode_str = "unknown\n";
++		break;
++	}
++	
++	len = snprintf(buf, sizeof(buf), "%s", mode_str);
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
++}
++
++static ssize_t mctp_debugfs_mode_write(struct file *file, const char __user *userbuf,
++                                       size_t count, loff_t *ppos)
++{
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file);
++	char buf[16];
++	
++	if (count >= sizeof(buf))
++		return -EINVAL;
++	
++	if (copy_from_user(buf, userbuf, count))
++		return -EFAULT;
++	
++	buf[count] = '\0';
++	
++	spin_lock_bh(&mctp_usb->error_inject.lock);
++	
++	if (strncmp(buf, "always", 6) == 0)
++		mctp_usb->error_inject.mode = MCTP_ERR_MODE_ALWAYS;
++	else if (strncmp(buf, "random", 6) == 0)
++		mctp_usb->error_inject.mode = MCTP_ERR_MODE_RANDOM;
++	else if (strncmp(buf, "count", 5) == 0)
++		mctp_usb->error_inject.mode = MCTP_ERR_MODE_COUNT;
++	else {
++		spin_unlock_bh(&mctp_usb->error_inject.lock);
++		return -EINVAL;
++	}
++	
++	spin_unlock_bh(&mctp_usb->error_inject.lock);
++	
++	return count;
++}
++
++static const struct file_operations mctp_debugfs_mode_fops = {
++	.owner = THIS_MODULE,
++	.read = mctp_debugfs_mode_read,
++	.write = mctp_debugfs_mode_write,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++/* Generic u32 read/write helpers */
++#define MCTP_DEBUGFS_U32_DEFINE(name, field) \
++static ssize_t mctp_debugfs_##name##_read(struct file *file, char __user *userbuf, \
++                                          size_t count, loff_t *ppos) \
++{ \
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file); \
++	char buf[32]; \
++	int len; \
++	\
++	len = snprintf(buf, sizeof(buf), "%u\n", mctp_usb->error_inject.field); \
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len); \
++} \
++\
++static ssize_t mctp_debugfs_##name##_write(struct file *file, const char __user *userbuf, \
++                                           size_t count, loff_t *ppos) \
++{ \
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file); \
++	char buf[32]; \
++	u32 val; \
++	int rc; \
++	\
++	if (count >= sizeof(buf)) \
++		return -EINVAL; \
++	\
++	if (copy_from_user(buf, userbuf, count)) \
++		return -EFAULT; \
++	\
++	buf[count] = '\0'; \
++	rc = kstrtou32(buf, 0, &val); \
++	if (rc) \
++		return rc; \
++	\
++	spin_lock_bh(&mctp_usb->error_inject.lock); \
++	mctp_usb->error_inject.field = val; \
++	spin_unlock_bh(&mctp_usb->error_inject.lock); \
++	\
++	return count; \
++} \
++\
++static const struct file_operations mctp_debugfs_##name##_fops = { \
++	.owner = THIS_MODULE, \
++	.read = mctp_debugfs_##name##_read, \
++	.write = mctp_debugfs_##name##_write, \
++	.open = simple_open, \
++	.llseek = default_llseek, \
++};
++
++/* Generic int read/write helpers (for error codes) */
++#define MCTP_DEBUGFS_INT_DEFINE(name, field) \
++static ssize_t mctp_debugfs_##name##_read(struct file *file, char __user *userbuf, \
++                                          size_t count, loff_t *ppos) \
++{ \
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file); \
++	char buf[32]; \
++	int len; \
++	\
++	len = snprintf(buf, sizeof(buf), "%d\n", mctp_usb->error_inject.field); \
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len); \
++} \
++\
++static ssize_t mctp_debugfs_##name##_write(struct file *file, const char __user *userbuf, \
++                                           size_t count, loff_t *ppos) \
++{ \
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file); \
++	char buf[32]; \
++	int val; \
++	int rc; \
++	\
++	if (count >= sizeof(buf)) \
++		return -EINVAL; \
++	\
++	if (copy_from_user(buf, userbuf, count)) \
++		return -EFAULT; \
++	\
++	buf[count] = '\0'; \
++	rc = kstrtoint(buf, 0, &val); \
++	if (rc) \
++		return rc; \
++	\
++	spin_lock_bh(&mctp_usb->error_inject.lock); \
++	mctp_usb->error_inject.field = val; \
++	spin_unlock_bh(&mctp_usb->error_inject.lock); \
++	\
++	return count; \
++} \
++\
++static const struct file_operations mctp_debugfs_##name##_fops = { \
++	.owner = THIS_MODULE, \
++	.read = mctp_debugfs_##name##_read, \
++	.write = mctp_debugfs_##name##_write, \
++	.open = simple_open, \
++	.llseek = default_llseek, \
++};
++
++/* Generic bool read/write helpers */
++#define MCTP_DEBUGFS_BOOL_DEFINE(name, field) \
++static ssize_t mctp_debugfs_##name##_read(struct file *file, char __user *userbuf, \
++                                          size_t count, loff_t *ppos) \
++{ \
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file); \
++	char buf[8]; \
++	int len; \
++	\
++	len = snprintf(buf, sizeof(buf), "%d\n", mctp_usb->error_inject.field ? 1 : 0); \
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len); \
++} \
++\
++static ssize_t mctp_debugfs_##name##_write(struct file *file, const char __user *userbuf, \
++                                           size_t count, loff_t *ppos) \
++{ \
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file); \
++	char buf[8]; \
++	int val; \
++	int rc; \
++	\
++	if (count >= sizeof(buf)) \
++		return -EINVAL; \
++	\
++	if (copy_from_user(buf, userbuf, count)) \
++		return -EFAULT; \
++	\
++	buf[count] = '\0'; \
++	rc = kstrtoint(buf, 0, &val); \
++	if (rc) \
++		return rc; \
++	\
++	spin_lock_bh(&mctp_usb->error_inject.lock); \
++	mctp_usb->error_inject.field = (val != 0); \
++	spin_unlock_bh(&mctp_usb->error_inject.lock); \
++	\
++	return count; \
++} \
++\
++static const struct file_operations mctp_debugfs_##name##_fops = { \
++	.owner = THIS_MODULE, \
++	.read = mctp_debugfs_##name##_read, \
++	.write = mctp_debugfs_##name##_write, \
++	.open = simple_open, \
++	.llseek = default_llseek, \
++};
++
++/* Define all the file operations */
++MCTP_DEBUGFS_INT_DEFINE(urb_tx_sync_error_code, urb_tx_sync_error_code)
++MCTP_DEBUGFS_INT_DEFINE(urb_tx_async_error_code, urb_tx_async_error_code)
++MCTP_DEBUGFS_U32_DEFINE(urb_tx_error_rate, urb_tx_error_rate)
++MCTP_DEBUGFS_INT_DEFINE(urb_rx_error_code, urb_rx_error_code)
++MCTP_DEBUGFS_U32_DEFINE(urb_rx_error_rate, urb_rx_error_rate)
++MCTP_DEBUGFS_BOOL_DEFINE(enable_fragment_drop, enable_fragment_drop)
++MCTP_DEBUGFS_BOOL_DEFINE(enable_seq_corrupt, enable_seq_corrupt)
++MCTP_DEBUGFS_BOOL_DEFINE(enable_som_clear, enable_som_clear)
++MCTP_DEBUGFS_U32_DEFINE(delay_ms, delay_ms)
++
++/* EID filter attributes */
++#define MCTP_DEBUGFS_U8_DEFINE(name, field) \
++static ssize_t mctp_debugfs_##name##_read(struct file *file, char __user *userbuf, \
++                                          size_t count, loff_t *ppos) \
++{ \
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file); \
++	char buf[8]; \
++	int len; \
++	\
++	len = snprintf(buf, sizeof(buf), "%u\n", mctp_usb->error_inject.eid_filter.field); \
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len); \
++} \
++\
++static ssize_t mctp_debugfs_##name##_write(struct file *file, const char __user *userbuf, \
++                                           size_t count, loff_t *ppos) \
++{ \
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file); \
++	char buf[8]; \
++	u8 val; \
++	int rc; \
++	\
++	if (count >= sizeof(buf)) \
++		return -EINVAL; \
++	\
++	if (copy_from_user(buf, userbuf, count)) \
++		return -EFAULT; \
++	\
++	buf[count] = '\0'; \
++	rc = kstrtou8(buf, 0, &val); \
++	if (rc) \
++		return rc; \
++	\
++	spin_lock_bh(&mctp_usb->error_inject.lock); \
++	mctp_usb->error_inject.eid_filter.field = val; \
++	spin_unlock_bh(&mctp_usb->error_inject.lock); \
++	\
++	return count; \
++} \
++\
++static const struct file_operations mctp_debugfs_##name##_fops = { \
++	.owner = THIS_MODULE, \
++	.read = mctp_debugfs_##name##_read, \
++	.write = mctp_debugfs_##name##_write, \
++	.open = simple_open, \
++	.llseek = default_llseek, \
++};
++
++static ssize_t mctp_debugfs_eid_filter_enable_read(struct file *file, char __user *userbuf,
++                                                   size_t count, loff_t *ppos)
++{
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file);
++	char buf[8];
++	int len;
++	
++	len = snprintf(buf, sizeof(buf), "%d\n", mctp_usb->error_inject.eid_filter.enabled);
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
++}
++
++static ssize_t mctp_debugfs_eid_filter_enable_write(struct file *file, const char __user *userbuf,
++                                                    size_t count, loff_t *ppos)
++{
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file);
++	char buf[8];
++	bool enable;
++	int rc;
++	
++	if (count >= sizeof(buf))
++		return -EINVAL;
++	
++	if (copy_from_user(buf, userbuf, count))
++		return -EFAULT;
++	
++	buf[count] = '\0';
++	rc = kstrtobool(buf, &enable);
++	if (rc)
++		return rc;
++	
++	spin_lock_bh(&mctp_usb->error_inject.lock);
++	mctp_usb->error_inject.eid_filter.enabled = enable;
++	spin_unlock_bh(&mctp_usb->error_inject.lock);
++	
++	return count;
++}
++
++static const struct file_operations mctp_debugfs_eid_filter_enable_fops = {
++	.owner = THIS_MODULE,
++	.read = mctp_debugfs_eid_filter_enable_read,
++	.write = mctp_debugfs_eid_filter_enable_write,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++MCTP_DEBUGFS_U8_DEFINE(eid_filter_src_eid, src_eid)
++MCTP_DEBUGFS_U8_DEFINE(eid_filter_dest_eid, dest_eid)
++MCTP_DEBUGFS_U8_DEFINE(eid_filter_msg_type, msg_type)
++
++/* stats attribute (read-only) */
++static ssize_t mctp_debugfs_stats_read(struct file *file, char __user *userbuf,
++                                       size_t count, loff_t *ppos)
++{
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file);
++	struct mctp_error_inject *ei = &mctp_usb->error_inject;
++	char *buf;
++	int len = 0;
++	ssize_t ret;
++	
++	buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++	
++	spin_lock_bh(&ei->lock);
++	
++	len += snprintf(buf + len, PAGE_SIZE - len, "enable_tx: %d\n", ei->enable_tx);
++	len += snprintf(buf + len, PAGE_SIZE - len, "enable_rx: %d\n", ei->enable_rx);
++	len += snprintf(buf + len, PAGE_SIZE - len, "mode: %s\n",
++	               ei->mode == MCTP_ERR_MODE_ALWAYS ? "always" :
++	               ei->mode == MCTP_ERR_MODE_RANDOM ? "random" : "count");
++	len += snprintf(buf + len, PAGE_SIZE - len, "tx_sync_errors_injected: %u\n",
++	               ei->urb_tx_sync_errors_injected);
++	len += snprintf(buf + len, PAGE_SIZE - len, "tx_async_errors_injected: %u\n",
++	               ei->urb_tx_async_errors_injected);
++	len += snprintf(buf + len, PAGE_SIZE - len, "rx_errors_injected: %u\n",
++	               ei->urb_rx_errors_injected);
++	len += snprintf(buf + len, PAGE_SIZE - len, "fragments_dropped: %u\n",
++	               ei->fragments_dropped);
++	len += snprintf(buf + len, PAGE_SIZE - len, "seq_corruptions: %u\n",
++	               ei->seq_corruptions);
++	len += snprintf(buf + len, PAGE_SIZE - len, "som_clears: %u\n",
++	               ei->som_clears);
++	len += snprintf(buf + len, PAGE_SIZE - len, "total_packets_processed: %llu\n",
++	               ei->total_packets_processed);
++	len += snprintf(buf + len, PAGE_SIZE - len, "total_errors_injected: %llu\n",
++	               ei->total_errors_injected);
++	
++	spin_unlock_bh(&ei->lock);
++	
++	ret = simple_read_from_buffer(userbuf, count, ppos, buf, len);
++	kfree(buf);
++	
++	return ret;
++}
++
++static const struct file_operations mctp_debugfs_stats_fops = {
++	.owner = THIS_MODULE,
++	.read = mctp_debugfs_stats_read,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++/* reset attribute (write-only) */
++static ssize_t mctp_debugfs_reset_write(struct file *file, const char __user *userbuf,
++                                        size_t count, loff_t *ppos)
++{
++	struct mctp_usb *mctp_usb = mctp_usb_from_file(file);
++	struct mctp_error_inject *ei = &mctp_usb->error_inject;
++	char buf[8];
++	int val;
++	int rc;
++	
++	if (count >= sizeof(buf))
++		return -EINVAL;
++	
++	if (copy_from_user(buf, userbuf, count))
++		return -EFAULT;
++	
++	buf[count] = '\0';
++	rc = kstrtoint(buf, 0, &val);
++	if (rc)
++		return rc;
++	
++	if (val != 1)
++		return -EINVAL;
++	
++	spin_lock_bh(&ei->lock);
++	
++	/* Reset all state */
++	ei->enable_tx = false;
++	ei->enable_rx = false;
++	ei->mode = MCTP_ERR_MODE_ALWAYS;
++	ei->urb_tx_sync_error_code = 0;
++	ei->urb_tx_async_error_code = 0;
++	ei->urb_tx_error_rate = 0;
++	ei->urb_tx_sync_inject_count = 0;
++	ei->urb_tx_async_inject_count = 0;
++	ei->urb_rx_error_code = 0;
++	ei->urb_rx_error_rate = 0;
++	ei->urb_rx_inject_count = 0;
++	ei->enable_fragment_drop = false;
++	ei->enable_seq_corrupt = false;
++	ei->enable_som_clear = false;
++	ei->delay_ms = 0;
++	ei->eid_filter.enabled = false;
++	ei->eid_filter.src_eid = 0;
++	ei->eid_filter.dest_eid = 0;
++	ei->eid_filter.msg_type = 0;
++	
++	/* Reset statistics */
++	ei->urb_tx_sync_errors_injected = 0;
++	ei->urb_tx_async_errors_injected = 0;
++	ei->urb_rx_errors_injected = 0;
++	ei->fragments_dropped = 0;
++	ei->seq_corruptions = 0;
++	ei->som_clears = 0;
++	ei->total_packets_processed = 0;
++	ei->total_errors_injected = 0;
++	
++	spin_unlock_bh(&ei->lock);
++	
++	netdev_info(mctp_usb->netdev, "Error injection reset\n");
++	
++	return count;
++}
++
++static const struct file_operations mctp_debugfs_reset_fops = {
++	.owner = THIS_MODULE,
++	.write = mctp_debugfs_reset_write,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++/* Initialize error injection - called from main driver probe */
++void mctp_usb_error_inject_init(struct mctp_usb *mctp_usb)
++{
++	struct dentry *dir, *eid_dir;
++	
++	/* Initialize error injection state */
++	spin_lock_init(&mctp_usb->error_inject.lock);
++	prandom_seed_state(&mctp_usb->error_inject.rng, (u64)jiffies);
++	mctp_usb->error_inject.enable_tx = false;
++	mctp_usb->error_inject.enable_rx = false;
++	mctp_usb->error_inject.mode = MCTP_ERR_MODE_ALWAYS;
++	/* All other fields are zero-initialized */
++	
++	/* Setup debugfs */
++	if (!mctp_usb_debugfs_root)
++		return;
++	
++	dir = debugfs_create_dir(netdev_name(mctp_usb->netdev), mctp_usb_debugfs_root);
++	if (IS_ERR_OR_NULL(dir))
++		return;
++	
++	mctp_usb->debugfs_dir = dir;
++	
++	/* Create error_inject files */
++	debugfs_create_file("enable_tx", 0600, dir, mctp_usb, &mctp_debugfs_enable_tx_fops);
++	debugfs_create_file("enable_rx", 0600, dir, mctp_usb, &mctp_debugfs_enable_rx_fops);
++	debugfs_create_file("mode", 0600, dir, mctp_usb, &mctp_debugfs_mode_fops);
++	debugfs_create_file("urb_tx_sync_error_code", 0600, dir, mctp_usb, &mctp_debugfs_urb_tx_sync_error_code_fops);
++	debugfs_create_file("urb_tx_async_error_code", 0600, dir, mctp_usb, &mctp_debugfs_urb_tx_async_error_code_fops);
++	debugfs_create_file("urb_tx_error_rate", 0600, dir, mctp_usb, &mctp_debugfs_urb_tx_error_rate_fops);
++	debugfs_create_file("urb_rx_error_code", 0600, dir, mctp_usb, &mctp_debugfs_urb_rx_error_code_fops);
++	debugfs_create_file("urb_rx_error_rate", 0600, dir, mctp_usb, &mctp_debugfs_urb_rx_error_rate_fops);
++	debugfs_create_file("enable_fragment_drop", 0600, dir, mctp_usb, &mctp_debugfs_enable_fragment_drop_fops);
++	debugfs_create_file("enable_seq_corrupt", 0600, dir, mctp_usb, &mctp_debugfs_enable_seq_corrupt_fops);
++	debugfs_create_file("enable_som_clear", 0600, dir, mctp_usb, &mctp_debugfs_enable_som_clear_fops);
++	debugfs_create_file("delay_ms", 0600, dir, mctp_usb, &mctp_debugfs_delay_ms_fops);
++	debugfs_create_file("stats", 0400, dir, mctp_usb, &mctp_debugfs_stats_fops);
++	debugfs_create_file("reset", 0200, dir, mctp_usb, &mctp_debugfs_reset_fops);
++	
++	/* Create eid_filter subdirectory */
++	eid_dir = debugfs_create_dir("eid_filter", dir);
++	if (!IS_ERR_OR_NULL(eid_dir)) {
++		debugfs_create_file("enable", 0600, eid_dir, mctp_usb, &mctp_debugfs_eid_filter_enable_fops);
++		debugfs_create_file("src_eid", 0600, eid_dir, mctp_usb, &mctp_debugfs_eid_filter_src_eid_fops);
++		debugfs_create_file("dest_eid", 0600, eid_dir, mctp_usb, &mctp_debugfs_eid_filter_dest_eid_fops);
++		debugfs_create_file("msg_type", 0600, eid_dir, mctp_usb, &mctp_debugfs_eid_filter_msg_type_fops);
++	}
++}
++EXPORT_SYMBOL_GPL(mctp_usb_error_inject_init);
++
++/* Cleanup error injection - called from main driver disconnect */
++void mctp_usb_error_inject_cleanup(struct mctp_usb *mctp_usb)
++{
++	debugfs_remove_recursive(mctp_usb->debugfs_dir);
++	mctp_usb->debugfs_dir = NULL;
++}
++EXPORT_SYMBOL_GPL(mctp_usb_error_inject_cleanup);
++
++/* Module init for debugfs root */
++int __init mctp_usb_error_inject_module_init(void)
++{
++	/* Create debugfs root directory */
++	mctp_usb_debugfs_root = debugfs_create_dir("mctp_usb", NULL);
++	if (IS_ERR_OR_NULL(mctp_usb_debugfs_root)) {
++		pr_warn("MCTP USB: Failed to create debugfs root, error injection disabled\n");
++		mctp_usb_debugfs_root = NULL;
++		return -ENODEV;
++	}
++	
++	return 0;
++}
++
++/* Module exit for debugfs root
++ * Note: Not marked __exit because it's called from __init error path in mctp-usb.c
++ */
++void mctp_usb_error_inject_module_exit(void)
++{
++	debugfs_remove_recursive(mctp_usb_debugfs_root);
++	mctp_usb_debugfs_root = NULL;
++}
++
+diff --git a/drivers/net/mctp/mctp-usb-error-inject.h b/drivers/net/mctp/mctp-usb-error-inject.h
+new file mode 100644
+index 000000000000..793802897a9c
+--- /dev/null
++++ b/drivers/net/mctp/mctp-usb-error-inject.h
+@@ -0,0 +1,89 @@
++/* SPDX-License-Identifier: GPL-2.0+ */
++/*
++ * mctp-usb-error-inject.h - Error injection infrastructure for MCTP USB
++ *
++ * Copyright (C) 2024 Code Construct Pty Ltd
++ */
++
++#ifndef _MCTP_USB_ERROR_INJECT_H
++#define _MCTP_USB_ERROR_INJECT_H
++
++#include <linux/types.h>
++#include <linux/skbuff.h>
++#include <linux/random.h>
++#include <linux/spinlock.h>
++#include <linux/debugfs.h>
++
++struct mctp_usb;
++
++/* Error injection modes */
++enum mctp_error_inject_mode {
++	MCTP_ERR_MODE_ALWAYS,
++	MCTP_ERR_MODE_RANDOM,
++	MCTP_ERR_MODE_COUNT
++};
++
++/* Per-interface error injection state */
++struct mctp_error_inject {
++	bool enable_tx;  /* Separate enable for TX path */
++	bool enable_rx;  /* Separate enable for RX path */
++	enum mctp_error_inject_mode mode;
++	
++	/* TX injection - separate sync and async */
++	int urb_tx_sync_error_code;   /* Sync error (URB submission) */
++	int urb_tx_async_error_code;  /* Async error (URB completion) */
++	u32 urb_tx_error_rate;        /* Percentage (0-100) or count */
++	u32 urb_tx_sync_inject_count; /* Counter for sync count mode */
++	u32 urb_tx_async_inject_count;/* Counter for async count mode */
++	u32 urb_tx_sync_errors_injected;
++	u32 urb_tx_async_errors_injected;
++	
++	/* RX injection */
++	int urb_rx_error_code;
++	u32 urb_rx_error_rate;
++	u32 urb_rx_inject_count;
++	u32 urb_rx_errors_injected;
++	
++	/* Fragment injection - drop, corrupt sequence, clear SOM */
++	bool enable_fragment_drop;      /* Drop 2nd+ fragments */
++	bool enable_seq_corrupt;        /* Corrupt sequence number in middle/end fragments */
++	bool enable_som_clear;          /* Clear SOM bit in first fragment */
++	u32 fragments_dropped;
++	u32 seq_corruptions;
++	u32 som_clears;
++	
++	/* Delay injection */
++	u32 delay_ms;
++	
++	/* EID filtering */
++	struct {
++		bool enabled;
++		u8 src_eid;      /* 0 = any */
++		u8 dest_eid;     /* 0 = any */
++		u8 msg_type;     /* 0 = any */
++	} eid_filter;
++	
++	/* Statistics */
++	u64 total_packets_processed;
++	u64 total_errors_injected;
++	
++	/* RNG state */
++	struct rnd_state rng;
++	spinlock_t lock;
++};
++
++/* Module init/exit functions */
++int mctp_usb_error_inject_module_init(void);
++void mctp_usb_error_inject_module_exit(void);
++
++/* Public API for main driver */
++void mctp_usb_error_inject_init(struct mctp_usb *mctp_usb);
++void mctp_usb_error_inject_cleanup(struct mctp_usb *mctp_usb);
++
++int mctp_usb_error_inject_tx_sync(struct mctp_usb *mctp_usb, struct sk_buff *skb);
++int mctp_usb_error_inject_tx_async(struct mctp_usb *mctp_usb, int original_status);
++int mctp_usb_error_inject_rx(struct mctp_usb *mctp_usb, int original_status);
++int mctp_usb_error_inject_fragment(struct mctp_usb *mctp_usb, struct sk_buff *skb);
++
++#endif /* _MCTP_USB_ERROR_INJECT_H */
++
+diff --git a/drivers/net/mctp/mctp-usb.c b/drivers/net/mctp/mctp-usb.c
+index 815f5debf7d9..69175639b93d 100644
+--- a/drivers/net/mctp/mctp-usb.c
++++ b/drivers/net/mctp/mctp-usb.c
+@@ -19,10 +19,13 @@
+ 
+ #include <uapi/linux/if_arp.h>
+ 
++#include "mctp-usb-error-inject.h"
++
+ /* number of IN/OUT urbs to queue */
+ const unsigned int n_rx_queue = 8;
+ const unsigned int n_tx_queue = 8;
+ 
++
+ struct mctp_usb {
+ 	struct usb_device *usbdev;
+ 	struct usb_interface *intf;
+@@ -42,6 +45,10 @@ struct mctp_usb {
+ 
+ 	/* TX batching support - controlled via sysfs */
+ 	bool tx_batching_enabled;
++	
++	/* Error injection support */
++	struct mctp_error_inject error_inject;
++	struct dentry *debugfs_dir;
+ };
+ 
+ /* Structure to track batched packets in URB context */
+@@ -64,11 +71,18 @@ static void mctp_usb_out_complete(struct urb *urb)
+ 		netif_wake_queue(netdev);
+ 
+ 	status = urb->status;
++	
++	/* ERROR INJECTION POINT: TX URB completion (asynchronous error)
++	 * Note: Injection happens at URB level (may affect multiple batched packets)
++	 */
++	status = mctp_usb_error_inject_tx_async(mctp_usb, status);
+ 
++	/* Log error type for debugging */
+ 	switch (status) {
+ 	case -ENOENT:
+ 	case -ECONNRESET:
+ 	case -ESHUTDOWN:
++	case -EPROTO:
+ 		if (net_ratelimit()) {
+ 			netdev_warn(netdev,
+ 				    "tx urb shutdown/error status: %d\n",
+@@ -88,6 +102,57 @@ static void mctp_usb_out_complete(struct urb *urb)
+ 		netdev->stats.tx_dropped += ctx->num_packets;
+ 	}
+ 
++	if (status != 0) {
++		/* Report error to socket error queue for batched URB.
++		*/
++		skb = skb_dequeue(&ctx->skbs);
++		if (skb) {
++			if (skb->len >= sizeof(struct mctp_usb_hdr)) {
++				struct mctp_usb_hdr *hdr;
++				struct sk_buff *pkt_skb;
++				struct mctp_sk_key *key = NULL;
++				struct sock *sk;
++				unsigned int pkt_total_len;
++				
++				netdev_dbg(netdev, "Async TX error: Processing batched SKB len=%u\n", skb->len);
++				
++				/* Parse ONLY the first packet for error reporting */
++				hdr = (struct mctp_usb_hdr *)skb->data;
++				pkt_total_len = hdr->len;
++				
++				if (pkt_total_len <= skb->len) {
++					/* Create temp SKB with first packet only */
++					pkt_skb = alloc_skb(pkt_total_len, GFP_ATOMIC);
++					if (pkt_skb) {
++						skb_put_data(pkt_skb, skb->data, pkt_total_len);
++						pkt_skb->dev = netdev;
++						
++						/* Remove USB header to expose MCTP header */
++						if (skb_pull(pkt_skb, sizeof(struct mctp_usb_hdr))) {
++							skb_reset_network_header(pkt_skb);
++							
++							/* Look up socket and report ONE error for entire batch */
++							sk = mctp_lookup_sock_for_error(pkt_skb, netdev, NULL, &key);
++							
++							if (sk) {
++								netdev_dbg(netdev, "Async TX error: Reporting error %d for entire batch (key=%p)\n",
++									status, key);
++								mctp_queue_error(sk, pkt_skb, -status, netdev,
++										MCTP_DIR_TX, MCTP_BINDING_USB, key);
++								sock_put(sk);
++							} else {
++								netdev_dbg(netdev, "Async TX error: Not reported (no TX key or error queue disabled)\n");
++							}
++						}
++						kfree_skb(pkt_skb);
++					}
++				}
++			}
++			/* Always free the dequeued SKB, regardless of whether we could report error */
++			kfree_skb(skb);
++		}	
++	}
++
+ 	/* Free all batched skbs */
+ 	while ((skb = skb_dequeue(&ctx->skbs)) != NULL) {
+ 		if (status == 0)
+@@ -97,7 +162,7 @@ static void mctp_usb_out_complete(struct urb *urb)
+ 	}
+ 
+ 	kfree(ctx);
+-	usb_free_urb(urb);
++	usb_free_urb(urb);	
+ }
+ /* Fast path: send a single packet without batching.
+  * This avoids lock overhead when batching is disabled.
+@@ -138,6 +203,14 @@ static netdev_tx_t mctp_usb_send_single(struct mctp_usb *mctp_usb,
+ 
+ 	netdev->stats.tx_bytes += pkt_len - sizeof(struct mctp_usb_hdr);
+ 
++	/* ERROR INJECTION POINT: TX URB submission (synchronous error) */
++	rc = mctp_usb_error_inject_tx_sync(mctp_usb, skb);
++	if (rc) {
++		/* Simulate URB submission failure */
++		netdev_info(netdev, "TX single packet: URB submit SIMULATED failure (error injection, code %d)\n", rc);
++		goto err_free_urb;
++	}
++
+ 	/* Submit URB */
+ 	usb_fill_bulk_urb(urb, mctp_usb->usbdev,
+ 			  usb_sndbulkpipe(mctp_usb->usbdev, mctp_usb->ep_out),
+@@ -164,6 +237,25 @@ static netdev_tx_t mctp_usb_send_single(struct mctp_usb *mctp_usb,
+ 	skb_dequeue(&ctx->skbs);
+ 	kfree(ctx);
+ err_drop:
++	/* Report synchronous TX error if URB submission failed.
++	 * SKB still has USB header, remove it for socket lookup.
++	 */
++	if (rc != 0 && skb->len >= sizeof(struct mctp_usb_hdr)) {
++		struct sock *sk;
++		struct mctp_sk_key *key = NULL;
++		
++		skb_pull(skb, sizeof(struct mctp_usb_hdr));
++		skb_reset_network_header(skb);
++		
++		sk = mctp_lookup_sock_for_error(skb, netdev, NULL, &key);
++		if (sk) {
++			netdev_dbg(netdev, "TX single: Reporting sync error (code=%d)\n", -rc);
++			mctp_queue_error(sk, skb, -rc, netdev,
++					 MCTP_DIR_TX, MCTP_BINDING_USB, key);
++			sock_put(sk);
++		}
++	}
++	
+ 	netdev->stats.tx_dropped++;
+ 	kfree_skb(skb);
+ 	return NETDEV_TX_OK;
+@@ -247,6 +339,52 @@ static netdev_tx_t mctp_usb_send_batch(struct mctp_usb *mctp_usb,
+ 	skb_dequeue(&ctx->skbs);
+ 	kfree(ctx);
+ err_drop:
++	/* TX Synchronous Error Reporting for batched SKB:
++	 */
++	if (rc != 0) {
++		struct mctp_usb_hdr *hdr;
++		struct sk_buff *pkt_skb;
++		struct sock *sk;
++		struct mctp_sk_key *key = NULL;
++		unsigned int pkt_total_len;
++		
++		netdev_info(netdev, "TX batch DROPPED (URB submit failed, error %d)\n", rc);
++		
++		/* Parse ONLY the first packet for error reporting */
++		if (skb->len >= sizeof(struct mctp_usb_hdr)) {
++			hdr = (struct mctp_usb_hdr *)skb->data;
++			
++			/* Validate USB header */
++			if (be16_to_cpu(hdr->id) == MCTP_USB_DMTF_ID) {
++				pkt_total_len = hdr->len;
++				
++				if (pkt_total_len <= skb->len) {
++					/* Create temp SKB for first packet only */
++					pkt_skb = alloc_skb(pkt_total_len, GFP_ATOMIC);
++					if (pkt_skb) {
++						skb_put_data(pkt_skb, skb->data, pkt_total_len);
++						pkt_skb->dev = netdev;
++						
++						/* Remove USB header to expose MCTP header */
++						if (skb_pull(pkt_skb, sizeof(struct mctp_usb_hdr))) {
++							skb_reset_network_header(pkt_skb);
++							
++							/* Look up socket and report ONE error for entire batch */
++							sk = mctp_lookup_sock_for_error(pkt_skb, netdev, NULL, &key);
++							if (sk) {
++								netdev_dbg(netdev, "TX batch sync error: Reporting for entire batch\n");
++								mctp_queue_error(sk, pkt_skb, -rc, netdev,
++										 MCTP_DIR_TX, MCTP_BINDING_USB, key);
++								sock_put(sk);
++							}
++						}
++						kfree_skb(pkt_skb);
++					}
++				}
++			}
++		}
++	}
++	
+ 	netdev->stats.tx_dropped++;
+ 	kfree_skb(skb);
+ 	return NETDEV_TX_OK;
+@@ -305,6 +443,7 @@ static netdev_tx_t mctp_usb_start_xmit(struct sk_buff *skb,
+ 	return NETDEV_TX_OK;
+ }
+ 
++
+ static void mctp_usb_in_complete(struct urb *urb);
+ 
+ /* If we fail to queue an in urb atomically (either due to skb allocation or
+@@ -355,6 +494,9 @@ static void mctp_usb_in_complete(struct urb *urb)
+ 
+ 	status = urb->status;
+ 	atomic_dec(&mctp_usb->rx_qlen);
++	
++	/* ERROR INJECTION POINT: RX URB completion error */
++	status = mctp_usb_error_inject_rx(mctp_usb, status);
+ 
+ 	switch (status) {
+ 	case -ENOENT:
+@@ -367,6 +509,16 @@ static void mctp_usb_in_complete(struct urb *urb)
+ 		}
+ 		usb_unanchor_urb(urb);
+ 		usb_free_urb(urb);
++		if (mctp_usb->error_inject.enable_rx) {
++			netdev_info(netdev,
++			           "RX packet DROPPED (error %d) - error injection is ACTIVE\n",
++			           status);
++		} else {
++			netdev_dbg(netdev,
++			           "RX packet DROPPED (error %d) - expected shutdown/reset\n",
++			           status);
++		}
++		netdev->stats.rx_dropped++;
+ 		kfree_skb(skb);
+ 		return;
+ 	case 0:
+@@ -377,7 +529,17 @@ static void mctp_usb_in_complete(struct urb *urb)
+ 				    "unexpected rx urb status: %d, requeuing\n",
+ 				    status);
+ 		}
+-		/* Free the bad SKB and try to requeue the URB */
++		if (mctp_usb->error_inject.enable_rx) {
++			netdev_info(netdev,
++			           "RX packet DROPPED (error %d) - error injection is ACTIVE\n",
++			           status);
++		} else {
++			netdev_info(netdev,
++			           "RX packet DROPPED (error %d) - real error\n",
++			           status);
++		}
++		netdev->stats.rx_errors++;
++		netdev->stats.rx_dropped++;
+ 		kfree_skb(skb);
+ 		goto requeue;
+ 	}
+@@ -397,6 +559,8 @@ static void mctp_usb_in_complete(struct urb *urb)
+ 		if (be16_to_cpu(hdr->id) != MCTP_USB_DMTF_ID) {
+ 			netdev_dbg(netdev, "rx: invalid id %04x\n",
+ 				   be16_to_cpu(hdr->id));
++			netdev->stats.rx_errors++;
++			netdev->stats.rx_dropped++;
+ 			break;
+ 		}
+ 
+@@ -437,6 +601,30 @@ static void mctp_usb_in_complete(struct urb *urb)
+ 		skb_reset_network_header(skb);
+ 		cb = __mctp_cb(skb);
+ 		cb->halen = 0;
++		
++		/* ERROR INJECTION POINT: Fragment drop/corruption
++		 * At this point:
++		 * - USB header has been removed
++		 * - skb->data points to MCTP header
++		 * - Before packet sent to network stack
++		 * This is the ideal location to inject fragment errors
++		 */
++		if (mctp_usb->error_inject.enable_fragment_drop ||
++		    mctp_usb->error_inject.enable_seq_corrupt ||
++		    mctp_usb->error_inject.enable_som_clear ||
++		    mctp_usb->error_inject.enable_rx) {
++			int inject_action = mctp_usb_error_inject_fragment(mctp_usb, skb);
++			
++			if (inject_action == 1) {
++				/* Drop this fragment */
++				netdev->stats.rx_dropped++;
++				kfree_skb(skb);
++				skb = skb2;
++				continue;
++			}
++			/* inject_action == 0: pass through (normally or with corruption) */
++		}
++		
+ 		netif_rx(skb);
+ 
+ 		skb = skb2;
+@@ -673,6 +861,9 @@ static int mctp_usb_probe(struct usb_interface *intf,
+ 		goto err_unregister_netdev;
+ 	}
+ 
++	/* Setup error injection after netdev registration (debugfs needs the netdev name) */
++	mctp_usb_error_inject_init(dev);
++
+ 	return 0;
+ 
+ err_unregister_netdev:
+@@ -686,7 +877,12 @@ static void mctp_usb_disconnect(struct usb_interface *intf)
+ {
+ 	struct mctp_usb *dev = usb_get_intfdata(intf);
+ 
++	/* Remove sysfs attribute group */
+ 	sysfs_remove_group(&dev->netdev->dev.kobj, &mctp_usb_attr_group);
++
++	/* Cleanup error injection */
++	mctp_usb_error_inject_cleanup(dev);
++	
+ 	mctp_unregister_netdev(dev->netdev);
+ 	usb_put_dev(dev->usbdev);
+ 	free_netdev(dev->netdev);
+@@ -707,7 +903,30 @@ static struct usb_driver mctp_usb_driver = {
+ 	.disconnect	= mctp_usb_disconnect,
+ };
+ 
+-module_usb_driver(mctp_usb_driver)
++static int __init mctp_usb_init(void)
++{
++	int rc;
++	
++	/* Initialize error injection infrastructure */
++	rc = mctp_usb_error_inject_module_init();
++	if (rc)
++		pr_warn("MCTP USB: Error injection initialization failed, continuing without it\n");
++	
++	rc = usb_register(&mctp_usb_driver);
++	if (rc)
++		mctp_usb_error_inject_module_exit();
++	
++	return rc;
++}
++
++static void __exit mctp_usb_exit(void)
++{
++	usb_deregister(&mctp_usb_driver);
++	mctp_usb_error_inject_module_exit();
++}
++
++module_init(mctp_usb_init);
++module_exit(mctp_usb_exit);
+ 
+ MODULE_LICENSE("GPL");
+ MODULE_AUTHOR("Jeremy Kerr <jk@codeconstruct.com.au>");
+diff --git a/include/net/mctp.h b/include/net/mctp.h
+index 1ecbff7116f6..c8aa6f028656 100644
+--- a/include/net/mctp.h
++++ b/include/net/mctp.h
+@@ -64,6 +64,21 @@ static inline struct mctp_hdr *mctp_hdr(struct sk_buff *skb)
+ }
+ 
+ /* socket implementation */
++/* Pending error context for deferred error reporting via workqueue */
++struct mctp_pending_error {
++	struct list_head list;
++	struct sk_buff *skb;		/* First fragment SKB (for addressing) */
++	struct sock *sk;		/* Socket for error reporting (refcounted) */
++	int error_code;
++	struct net_device *dev;
++	u8 direction;
++	u8 binding;
++	/* For RX timeout: original request payload from key */
++	u8 orig_msg_type;
++	u16 orig_payload_len;
++	u8 orig_payload[32];		/* First 32 bytes of original request */
++};
++
+ struct mctp_sock {
+ 	struct sock	sk;
+ 
+@@ -84,6 +99,14 @@ struct mctp_sock {
+ 	 * tag, and any netdev state for a request/response pairing
+ 	 */
+ 	struct timer_list key_expiry;
++
++	/* Error queue control */
++	bool		enable_errqueue;
++
++	/* Deferred error reporting (to avoid deadlock in timer context) */
++	struct work_struct error_report_work;
++	struct list_head pending_errors;
++	spinlock_t error_queue_lock;
+ };
+ 
+ /* Key for matching incoming packets to sockets or reassembly contexts.
+@@ -178,6 +201,14 @@ struct mctp_sk_key {
+ 	 * is used.
+ 	 */
+ 	bool		manual_alloc;
++
++	/* Original message header for error reporting on fragmented messages.
++	 * Captured from first fragment (SOM=1) to ensure errors on middle/end
++	 * fragments can still report original header to application.
++	 */
++	u8		orig_msg_type;		/* Message type (PLDM, SPDM, etc) */
++	u16		orig_payload_len;	/* Captured payload length */
++	u8		orig_payload[32];	/* First 32 bytes of original message */
+ };
+ 
+ struct mctp_skb_cb {
+@@ -298,6 +329,18 @@ void mctp_routes_exit(void);
+ int mctp_device_init(void);
+ void mctp_device_exit(void);
+ 
++/* Error queue support */
++u8 mctp_get_binding_type(struct net_device *dev);
++void mctp_queue_error(struct sock *sk, struct sk_buff *skb,
++		      int error_code, struct net_device *dev, u8 direction, u8 binding,
++		      struct mctp_sk_key *key);
++struct sock *mctp_lookup_sock_by_key(struct sk_buff *skb, struct net_device *dev,
++				     struct mctp_sk_key **found_key);
++struct sock *mctp_lookup_sock_for_error(struct sk_buff *skb,
++					struct net_device *dev,
++					struct mctp_sk_key *key,
++					struct mctp_sk_key **found_key);
++
+ /* MCTP IDs and Codes from DMTF specification
+  * "DSP0239 Management Component Transport Protocol (MCTP) IDs and Codes"
+  * https://www.dmtf.org/sites/default/files/standards/documents/DSP0239_1.11.1.pdf
+diff --git a/include/uapi/linux/mctp.h b/include/uapi/linux/mctp.h
+index e1db65df9359..bb1ba0b78af5 100644
+--- a/include/uapi/linux/mctp.h
++++ b/include/uapi/linux/mctp.h
+@@ -47,6 +47,7 @@ struct sockaddr_mctp_ext {
+ #define MCTP_TAG_PREALLOC	0x10
+ 
+ #define MCTP_OPT_ADDR_EXT	1
++#define MCTP_OPT_ENABLE_ERRQUEUE	2
+ 
+ #define SIOCMCTPALLOCTAG	(SIOCPROTOPRIVATE + 0)
+ #define SIOCMCTPDROPTAG		(SIOCPROTOPRIVATE + 1)
+@@ -97,4 +98,75 @@ struct mctp_ioc_tag_ctl2 {
+ 
+ };
+ 
++/*
++ * MCTP Error Queue Support
++ * For receiving asynchronous errors via recvmsg(MSG_ERRQUEUE)
++ */
++
++#define MCTP_ERROR_PAYLOAD_SIZE  32  /* Capture first 32 bytes of payload */
++
++/* Control message type for reading errors */
++#define MCTP_RECVERR  1
++
++/* Direction values */
++#define MCTP_DIR_TX  0
++#define MCTP_DIR_RX  1
++
++/* Binding types */
++#define MCTP_BINDING_USB   1
++#define MCTP_BINDING_I2C   2
++#define MCTP_BINDING_PCIE  3
++
++/**
++ * struct mctp_error - MCTP error information for applications
++ *
++ * This structure is returned to applications via recvmsg(MSG_ERRQUEUE).
++ * Contains everything needed to identify and handle binding layer errors.
++ *
++ * @error_code: Error number (ETIMEDOUT, EPIPE, EPROTO, etc.)
++ * @direction: 0=TX, 1=RX
++ * @binding: Binding type (1=USB, 2=I2C, 3=PCIe)
++ * @src_eid: Source EID
++ * @dest_eid: Destination EID
++ * @tag: MCTP tag value (0-7)
++ * @msg_type: MCTP message type (0x01=PLDM, 0x05=SPDM, etc.)
++ * @timestamp_ns: When error occurred (nanoseconds since boot)
++ * @payload_len: Length of captured payload
++ * @payload: First N bytes of message payload (includes protocol headers)
++ *
++ * For PLDM messages, payload contains:
++ *   payload[0] = Instance ID byte (bits 4-0 = instance ID)
++ *   payload[1] = PLDM Type byte (bits 5-0 = type: 2=T2, 5=T5)
++ *   payload[2] = Command code
++ *
++ * For SPDM messages, payload contains:
++ *   payload[0] = SPDM version
++ *   payload[1] = Request/Response code
++ *   payload[2+] = Parameters and session context
++ */
++struct mctp_error {
++	/* Error Information */
++	__u32	error_code;		/* errno value */
++	__u8	direction;		/* MCTP_DIR_TX or MCTP_DIR_RX */
++	__u8	binding;		/* MCTP_BINDING_* */
++	__u16	reserved1;
++
++	/* MCTP Addressing */
++	__u8	src_eid;		/* Source EID */
++	__u8	dest_eid;		/* Destination EID */
++	__u8	tag;			/* MCTP tag (0-7) */
++	__u8	msg_type;		/* MCTP message type */
++
++	/* Timestamp */
++	__u64	timestamp_ns;		/* Error timestamp */
++
++	/* Payload Capture */
++	__u16	payload_len;		/* Captured payload length */
++	__u16	reserved2;
++	__u8	payload[MCTP_ERROR_PAYLOAD_SIZE];
++
++	/* Reserved for future use */
++	__u32	reserved3[2];
++} __attribute__((packed));
++
+ #endif /* __UAPI_MCTP_H */
+diff --git a/net/mctp/Makefile b/net/mctp/Makefile
+index 6cd55233e685..b52b33bdbbd7 100644
+--- a/net/mctp/Makefile
++++ b/net/mctp/Makefile
+@@ -1,6 +1,6 @@
+ # SPDX-License-Identifier: GPL-2.0
+ obj-$(CONFIG_MCTP) += mctp.o
+-mctp-objs := af_mctp.o device.o route.o neigh.o
++mctp-objs := af_mctp.o device.o route.o neigh.o mctp-socket-error-inject.o
+ 
+ # tests
+ obj-$(CONFIG_MCTP_TEST) += test/utils.o
+diff --git a/net/mctp/af_mctp.c b/net/mctp/af_mctp.c
+index 57850d4dac5d..9c28d75fb906 100644
+--- a/net/mctp/af_mctp.c
++++ b/net/mctp/af_mctp.c
+@@ -20,6 +20,8 @@
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/mctp.h>
+ 
++#include "mctp-socket-error-inject.h"
++
+ /* socket implementation */
+ 
+ static void mctp_sk_expire_keys(struct timer_list *timer);
+@@ -83,7 +85,7 @@ static int mctp_bind(struct socket *sock, struct sockaddr *addr, int addrlen)
+ 	msk->bind_type = smctp->smctp_type & 0x7f; /* ignore the IC bit */
+ 
+ 	rc = sk->sk_prot->hash(sk);
+-
++	
+ out_release:
+ 	release_sock(sk);
+ 
+@@ -126,6 +128,17 @@ static int mctp_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
+ 	if (!capable(CAP_NET_RAW))
+ 		return -EACCES;
+ 
++	/* Socket-level error injection - test application error handling
++	 * Simulates various sendto() failures at socket layer (binding-agnostic):
++	 * - EBUSY: Tag allocation failure (all 8 tags in use)
++	 * - EHOSTUNREACH: No route to destination
++	 * - ENOBUFS/ENOMEM: Memory allocation failure
++	 * - EAGAIN: Would block (non-blocking socket)
++	 */
++	rc = mctp_socket_error_inject_sendmsg();
++	if (rc < 0)
++		return rc;
++
+ 	if (addr->smctp_network == MCTP_NET_ANY)
+ 		addr->smctp_network = mctp_default_net(sock_net(sk));
+ 
+@@ -203,7 +216,7 @@ static int mctp_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
+ }
+ 
+ static int mctp_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
+-			int flags)
++		int flags)
+ {
+ 	DECLARE_SOCKADDR(struct sockaddr_mctp *, addr, msg->msg_name);
+ 	struct sock *sk = sock->sk;
+@@ -213,6 +226,10 @@ static int mctp_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
+ 	u8 type;
+ 	int rc;
+ 
++	/* Handle error queue read */
++	if (flags & MSG_ERRQUEUE)
++		return sock_recv_errqueue(sk, msg, len, SOL_MCTP, MCTP_RECVERR);
++
+ 	if (flags & ~(MSG_DONTWAIT | MSG_TRUNC | MSG_PEEK))
+ 		return -EOPNOTSUPP;
+ 
+@@ -278,6 +295,103 @@ static int mctp_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
+ 	return rc;
+ }
+ 
++/* Work function - called by kernel worker thread to report errors
++ * Context: Process context, NO locks held
++ * 
++ * This defers error reporting from timer/softirq context to avoid deadlock.
++ * The timer path (mctp_sk_expire_keys) holds keys_lock, which would cause
++ * deadlock if we call sk_error_report() directly (wake-up callback might
++ * need keys_lock). By deferring to workqueue, we ensure error reporting
++ * happens after keys_lock is released.
++ */
++static void mctp_error_report_work_fn(struct work_struct *work)
++{
++	struct mctp_sock *msk = container_of(work, struct mctp_sock,
++					     error_report_work);
++	struct mctp_pending_error *perr, *tmp;
++	struct list_head local_list;
++	
++	/* Move all pending errors to local list to minimize lock time */
++	INIT_LIST_HEAD(&local_list);
++	
++	spin_lock_bh(&msk->error_queue_lock);
++	list_splice_init(&msk->pending_errors, &local_list);
++	spin_unlock_bh(&msk->error_queue_lock);
++	
++	/* Process all errors without holding locks - safe! */
++	list_for_each_entry_safe(perr, tmp, &local_list, list) {
++		/* Report error to application - safe, no MCTP locks held.
++		 *
++		 * For RX reassembly timeout, we use the socket saved in perr->sk
++		 * (from the RX key at timeout). This avoids redundant socket lookup
++		 * and ensures we report to the correct socket even if RX key is gone.
++		 *
++		 * For ETIMEDOUT, we have orig_payload saved in perr, so we build
++		 * the error structure directly instead of calling mctp_queue_error.
++		 */
++		if (perr->error_code == ETIMEDOUT && perr->sk && perr->orig_payload_len > 0) {
++			/* RX timeout with saved request payload - build error directly */
++			struct mctp_error *mctp_err;
++			struct sk_buff *err_skb;
++			struct mctp_hdr *mh;
++			
++			if (!perr->skb || perr->skb->len < sizeof(struct mctp_hdr))
++				goto cleanup;
++			
++			err_skb = alloc_skb(sizeof(*mctp_err), GFP_KERNEL);
++			if (!err_skb)
++				goto cleanup;
++			
++			mctp_err = (struct mctp_error *)skb_put(err_skb, sizeof(*mctp_err));
++			memset(mctp_err, 0, sizeof(*mctp_err));
++			
++			/* Fill error information */
++			mctp_err->error_code = perr->error_code;
++			mctp_err->direction = perr->direction;
++			mctp_err->binding = perr->binding;
++			mctp_err->timestamp_ns = ktime_get_ns();
++			
++			/* Fill addressing from first fragment SKB */
++			mh = mctp_hdr(perr->skb);
++			mctp_err->src_eid = mh->src;
++			mctp_err->dest_eid = mh->dest;
++			mctp_err->tag = mh->flags_seq_tag & MCTP_HDR_TAG_MASK;
++			
++			/* Use saved REQUEST payload from perr */
++			mctp_err->msg_type = perr->orig_msg_type;
++			mctp_err->payload_len = min_t(u16, perr->orig_payload_len,
++						      MCTP_ERROR_PAYLOAD_SIZE);
++			memcpy(mctp_err->payload, perr->orig_payload, mctp_err->payload_len);
++			
++			/* Queue error to socket */
++			if (sock_queue_err_skb(perr->sk, err_skb) == 0) {
++				sk_error_report(perr->sk);
++				pr_debug("MCTP timeout: Error queued (REQUEST payload, len=%u)\n",
++					 mctp_err->payload_len);
++			} else {
++				kfree_skb(err_skb);
++				pr_debug("MCTP timeout: Failed to queue error to socket\n");
++			}
++cleanup:
++			sock_put(perr->sk);
++		} else if (perr->sk) {
++			/* Other error types - use mctp_queue_error */
++			mctp_queue_error(perr->sk, perr->skb, perr->error_code,
++					 perr->dev, perr->direction, perr->binding, NULL);
++			sock_put(perr->sk);
++		} else {
++			/* Fallback: Look up socket from SKB (future error types) */
++			mctp_queue_error(&msk->sk, perr->skb, perr->error_code,
++					 perr->dev, perr->direction, perr->binding, NULL);
++		}
++		
++		/* Cleanup */
++		list_del(&perr->list);
++		kfree_skb(perr->skb);
++		kfree(perr);
++	}
++}
++
+ /* We're done with the key; invalidate, stop reassembly, and remove from lists.
+  */
+ static void __mctp_key_remove(struct mctp_sk_key *key, struct net *net,
+@@ -292,6 +406,82 @@ __must_hold(&net->mctp.keys_lock)
+ 	key->reasm_head = NULL;
+ 	key->reasm_dead = true;
+ 	key->valid = false;
++
++	/* Reassembly timeout - queue error for deferred reporting */
++	if (reason == MCTP_TRACE_KEY_TIMEOUT && skb && key->dev && key->dev->dev &&
++	    key->sk) {
++		struct mctp_sock *msk = container_of(key->sk, struct mctp_sock, sk);
++		
++		netdev_warn(key->dev->dev,
++			   "MCTP RX: Reassembly timeout - partial message discarded "
++			   "(src=%u, dest=%u, tag=%u, fragments incomplete)\n",
++			   key->peer_addr, key->local_addr, key->tag);
++		
++		/* Queue error for deferred reporting via workqueue if enabled.
++		 * Use ETIMEDOUT for reassembly timeout - semantically clearer than EPROTO
++		 * (timeout is caused by missing fragments that never arrive).
++		 *
++		 * CRITICAL: Only report if this key originated from TX (has orig_payload).
++		 * This ensures we only report errors for responses to OUR requests,
++		 * not for unsolicited requests from device.
++		 *
++		 * For TX-originated keys:
++		 * - key->sk = application that sent original request
++		 * - key->reasm_head (skb) = first fragment of response (used for addressing)
++		 * - key->orig_payload = original REQUEST payload (from TX phase)
++		 *
++		 * We pass socket + first fragment SKB (for addressing) to workqueue.
++		 * Workqueue will extract REQUEST payload from key->orig_payload,
++		 * allowing applications to identify which transaction timed out.
++		 */
++		if (msk->enable_errqueue && key->orig_payload_len > 0) {
++			struct mctp_pending_error *perr;
++			
++			perr = kmalloc(sizeof(*perr), GFP_ATOMIC);
++			if (perr) {
++				/* Clone first fragment SKB for later use by workqueue */
++				perr->skb = skb_clone(skb, GFP_ATOMIC);
++				if (perr->skb) {
++					/* Save socket with refcount - ensures it stays alive
++					 * until workqueue processes the error.
++					 * This is the application that sent the original request.
++					 */
++					perr->sk = key->sk;
++					sock_hold(perr->sk);
++					
++					perr->error_code = ETIMEDOUT;
++					perr->dev = key->dev->dev;
++					perr->direction = MCTP_DIR_RX;
++					perr->binding = mctp_get_binding_type(key->dev ? key->dev->dev : NULL);
++					
++				/* Copy original request payload from key for error reporting */
++				perr->orig_msg_type = key->orig_msg_type;
++				perr->orig_payload_len = key->orig_payload_len;
++				memcpy(perr->orig_payload, key->orig_payload,
++				       min_t(size_t, key->orig_payload_len, sizeof(perr->orig_payload)));
++				
++				/* Add to pending list and schedule work
++				 * Work will run later in process context with no locks held
++				 */
++				spin_lock_bh(&msk->error_queue_lock);
++				list_add_tail(&perr->list, &msk->pending_errors);
++				spin_unlock_bh(&msk->error_queue_lock);
++					
++					pr_info("MCTP: RX timeout queued for deferred error reporting (key has TX origin, orig_payload_len=%u)\n",
++						key->orig_payload_len);
++					
++					/* Schedule work - returns immediately */
++					schedule_work(&msk->error_report_work);
++				} else {
++					kfree(perr);
++				}
++			}
++		} else if (msk->enable_errqueue && key->orig_payload_len == 0) {
++			/* RX-only key (unsolicited request from device) - don't report */
++			pr_info("MCTP: RX timeout NOT reported - no TX origin (unsolicited request, orig_payload_len=0)\n");
++		}
++	}
++
+ 	mctp_dev_release_key(key->dev, key);
+ 	spin_unlock_irqrestore(&key->lock, flags);
+ 
+@@ -323,6 +513,17 @@ static int mctp_setsockopt(struct socket *sock, int level, int optname,
+ 		return 0;
+ 	}
+ 
++	if (optname == MCTP_OPT_ENABLE_ERRQUEUE) {
++		if (optlen != sizeof(int))
++			return -EINVAL;
++		if (copy_from_sockptr(&val, optval, sizeof(int)))
++			return -EFAULT;
++		
++		msk->enable_errqueue = !!val;
++		
++		return 0;
++	}
++
+ 	return -ENOPROTOOPT;
+ }
+ 
+@@ -547,6 +748,22 @@ static int mctp_compat_ioctl(struct socket *sock, unsigned int cmd,
+ }
+ #endif
+ 
++static __poll_t mctp_poll(struct file *file, struct socket *sock,
++			  poll_table *wait)
++{
++	struct sock *sk = sock->sk;
++	__poll_t mask;
++
++	/* Use standard datagram_poll for normal data */
++	mask = datagram_poll(file, sock, wait);
++
++	/* Check error queue */
++	if (!skb_queue_empty_lockless(&sk->sk_error_queue))
++		mask |= EPOLLERR | EPOLLPRI;
++
++	return mask;
++}
++
+ static const struct proto_ops mctp_dgram_ops = {
+ 	.family		= PF_MCTP,
+ 	.release	= mctp_release,
+@@ -555,7 +772,7 @@ static const struct proto_ops mctp_dgram_ops = {
+ 	.socketpair	= sock_no_socketpair,
+ 	.accept		= sock_no_accept,
+ 	.getname	= sock_no_getname,
+-	.poll		= datagram_poll,
++	.poll		= mctp_poll,
+ 	.ioctl		= mctp_ioctl,
+ 	.gettstamp	= sock_gettstamp,
+ 	.listen		= sock_no_listen,
+@@ -612,12 +829,21 @@ static void mctp_sk_expire_keys(struct timer_list *timer)
+ 		mod_timer(timer, next_expiry);
+ }
+ 
++/* Forward declaration for workqueue callback */
++static void mctp_error_report_work_fn(struct work_struct *work);
++
+ static int mctp_sk_init(struct sock *sk)
+ {
+ 	struct mctp_sock *msk = container_of(sk, struct mctp_sock, sk);
+ 
+ 	INIT_HLIST_HEAD(&msk->keys);
+ 	timer_setup(&msk->key_expiry, mctp_sk_expire_keys, 0);
++	
++	/* Initialize deferred error reporting workqueue */
++	INIT_WORK(&msk->error_report_work, mctp_error_report_work_fn);
++	INIT_LIST_HEAD(&msk->pending_errors);
++	spin_lock_init(&msk->error_queue_lock);
++	
+ 	return 0;
+ }
+ 
+@@ -667,6 +893,22 @@ static void mctp_sk_unhash(struct sock *sk)
+ 	 * as the sk is no longer observable
+ 	 */
+ 	del_timer_sync(&msk->key_expiry);
++	
++	/* Cancel pending error reporting work and free any pending errors */
++	cancel_work_sync(&msk->error_report_work);
++	{
++	struct mctp_pending_error *perr, *tmp_err;
++		
++	spin_lock_bh(&msk->error_queue_lock);
++	list_for_each_entry_safe(perr, tmp_err, &msk->pending_errors, list) {
++		list_del(&perr->list);
++			if (perr->sk)
++				sock_put(perr->sk);
++		kfree_skb(perr->skb);
++		kfree(perr);
++	}
++	spin_unlock_bh(&msk->error_queue_lock);
++	}
+ }
+ 
+ static void mctp_sk_destruct(struct sock *sk)
+@@ -763,6 +1005,10 @@ static __init int mctp_init(void)
+ 	if (rc)
+ 		goto err_unreg_neigh;
+ 
++	rc = mctp_socket_error_inject_init();
++	if (rc)
++		pr_warn("MCTP: Socket error injection init failed, continuing without it\n");
++
+ 	return 0;
+ 
+ err_unreg_neigh:
+@@ -779,6 +1025,7 @@ static __init int mctp_init(void)
+ 
+ static __exit void mctp_exit(void)
+ {
++	mctp_socket_error_inject_cleanup();
+ 	mctp_device_exit();
+ 	mctp_neigh_exit();
+ 	mctp_routes_exit();
+diff --git a/net/mctp/mctp-socket-error-inject.c b/net/mctp/mctp-socket-error-inject.c
+new file mode 100644
+index 000000000000..76c42216ae2f
+--- /dev/null
++++ b/net/mctp/mctp-socket-error-inject.c
+@@ -0,0 +1,221 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * MCTP Socket Error Injection
++ * 
++ * Binding-agnostic error injection at AF_MCTP socket layer.
++ * Allows testing application handling of sendto() API failures:
++ * - EBUSY: Tag allocation failure (all tags in use)
++ * - EHOSTUNREACH: No route to destination
++ * - ENOBUFS/ENOMEM: Memory exhaustion
++ * - EAGAIN: Would block
++ */
++
++#include <linux/module.h>
++#include <linux/debugfs.h>
++#include <linux/random.h>
++#include <linux/math64.h>
++#include "mctp-socket-error-inject.h"
++
++/* Global error injection state */
++struct mctp_socket_error_inject mctp_socket_ei;
++
++static struct dentry *mctp_socket_debugfs_root;
++
++/* Main injection function called from sendmsg() */
++int mctp_socket_error_inject_sendmsg(void)
++{
++	int ret = 0;
++	
++	spin_lock_bh(&mctp_socket_ei.lock);
++	mctp_socket_ei.sendmsg_calls++;
++	
++	if (mctp_socket_ei.enabled) {
++		mctp_socket_ei.errors_injected++;
++		ret = mctp_socket_ei.error_code;
++		
++		pr_info("MCTP Socket Error Injection: sendmsg() returning %d, "
++		        "total_injected=%llu\n",
++		        ret, mctp_socket_ei.errors_injected);
++	}
++	
++	spin_unlock_bh(&mctp_socket_ei.lock);
++	
++	return ret;
++}
++EXPORT_SYMBOL_GPL(mctp_socket_error_inject_sendmsg);
++
++/* Debugfs: enable */
++static ssize_t enable_read(struct file *file, char __user *userbuf,
++                           size_t count, loff_t *ppos)
++{
++	char buf[8];
++	int len;
++	
++	len = snprintf(buf, sizeof(buf), "%d\n", mctp_socket_ei.enabled ? 1 : 0);
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
++}
++
++static ssize_t enable_write(struct file *file, const char __user *userbuf,
++                            size_t count, loff_t *ppos)
++{
++	char buf[8];
++	size_t len = min(count, sizeof(buf) - 1);
++	int value;
++	
++	if (copy_from_user(buf, userbuf, len))
++		return -EFAULT;
++	buf[len] = '\0';
++	
++	if (kstrtoint(buf, 0, &value))
++		return -EINVAL;
++	
++	mctp_socket_ei.enabled = (value != 0);
++	
++	pr_info("MCTP Socket Error Injection: %s\n", 
++	        mctp_socket_ei.enabled ? "ENABLED" : "DISABLED");
++	return count;
++}
++
++static const struct file_operations enable_fops = {
++	.read = enable_read,
++	.write = enable_write,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++/* Debugfs: stats */
++static ssize_t stats_read(struct file *file, char __user *userbuf,
++                          size_t count, loff_t *ppos)
++{
++	char buf[256];
++	int len;
++	
++	spin_lock_bh(&mctp_socket_ei.lock);
++	len = snprintf(buf, sizeof(buf),
++	               "MCTP Socket Error Injection Statistics:\n"
++	               "  Enabled: %s\n"
++	               "  Error Code: %d\n"
++	               "  Total sendmsg() calls: %llu\n"
++	               "  Errors injected: %llu\n",
++	               mctp_socket_ei.enabled ? "yes" : "no",
++	               mctp_socket_ei.error_code,
++	               mctp_socket_ei.sendmsg_calls,
++	               mctp_socket_ei.errors_injected);
++	spin_unlock_bh(&mctp_socket_ei.lock);
++	
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
++}
++
++static const struct file_operations stats_fops = {
++	.read = stats_read,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++/* Debugfs: error_code */
++static ssize_t error_code_read(struct file *file, char __user *userbuf,
++                                size_t count, loff_t *ppos)
++{
++	char buf[32];
++	int len;
++	
++	len = snprintf(buf, sizeof(buf), "%d\n", mctp_socket_ei.error_code);
++	return simple_read_from_buffer(userbuf, count, ppos, buf, len);
++}
++
++static ssize_t error_code_write(struct file *file, const char __user *userbuf,
++                                 size_t count, loff_t *ppos)
++{
++	char buf[32];
++	size_t len = min(count, sizeof(buf) - 1);
++	int value;
++	
++	if (copy_from_user(buf, userbuf, len))
++		return -EFAULT;
++	buf[len] = '\0';
++	
++	if (kstrtoint(buf, 0, &value))
++		return -EINVAL;
++	
++	mctp_socket_ei.error_code = value;
++	return count;
++}
++
++static const struct file_operations error_code_fops = {
++	.read = error_code_read,
++	.write = error_code_write,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++/* Debugfs: reset */
++static ssize_t reset_write(struct file *file, const char __user *userbuf,
++                           size_t count, loff_t *ppos)
++{
++	char buf[8];
++	size_t len = min(count, sizeof(buf) - 1);
++	int value;
++	
++	if (copy_from_user(buf, userbuf, len))
++		return -EFAULT;
++	buf[len] = '\0';
++	
++	if (kstrtoint(buf, 0, &value))
++		return -EINVAL;
++	
++	if (value != 1)
++		return -EINVAL;
++	
++	/* Reset all state */
++	spin_lock_bh(&mctp_socket_ei.lock);
++	mctp_socket_ei.enabled = false;
++	mctp_socket_ei.error_code = 0;
++	mctp_socket_ei.sendmsg_calls = 0;
++	mctp_socket_ei.errors_injected = 0;
++	spin_unlock_bh(&mctp_socket_ei.lock);
++	
++	pr_info("MCTP Socket Error Injection: Reset (disabled and cleared)\n");
++	return count;
++}
++
++static const struct file_operations reset_fops = {
++	.write = reset_write,
++	.open = simple_open,
++	.llseek = default_llseek,
++};
++
++/* Initialization */
++int mctp_socket_error_inject_init(void)
++{
++	memset(&mctp_socket_ei, 0, sizeof(mctp_socket_ei));
++	spin_lock_init(&mctp_socket_ei.lock);
++	
++	/* Default settings */
++	mctp_socket_ei.enabled = false;
++	mctp_socket_ei.error_code = -EBUSY;  /* Default: simulate tag exhaustion */
++	
++	/* Create debugfs directory */
++	mctp_socket_debugfs_root = debugfs_create_dir("mctp_socket", NULL);
++	if (IS_ERR_OR_NULL(mctp_socket_debugfs_root)) {
++		pr_warn("MCTP Socket Error Injection: Failed to create debugfs directory\n");
++		return PTR_ERR(mctp_socket_debugfs_root);
++	}
++	
++	mctp_socket_ei.debugfs_dir = mctp_socket_debugfs_root;
++	
++	/* Create debugfs files */
++	debugfs_create_file("enable", 0644, mctp_socket_debugfs_root, NULL, &enable_fops);
++	debugfs_create_file("error_code", 0644, mctp_socket_debugfs_root, NULL, &error_code_fops);
++	debugfs_create_file("stats", 0444, mctp_socket_debugfs_root, NULL, &stats_fops);
++	debugfs_create_file("reset", 0200, mctp_socket_debugfs_root, NULL, &reset_fops);
++	
++	pr_info("MCTP Socket Error Injection: Initialized at /sys/kernel/debug/mctp_socket/\n");
++	return 0;
++}
++
++void mctp_socket_error_inject_cleanup(void)
++{
++	debugfs_remove_recursive(mctp_socket_debugfs_root);
++	pr_info("MCTP Socket Error Injection: Cleaned up\n");
++}
++
+diff --git a/net/mctp/mctp-socket-error-inject.h b/net/mctp/mctp-socket-error-inject.h
+new file mode 100644
+index 000000000000..07aa263b97ab
+--- /dev/null
++++ b/net/mctp/mctp-socket-error-inject.h
+@@ -0,0 +1,41 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * MCTP Socket Error Injection - Header
++ * 
++ * Binding-agnostic error injection at AF_MCTP socket layer.
++ * Tests application handling of sendto() failures.
++ */
++
++#ifndef __MCTP_SOCKET_ERROR_INJECT_H
++#define __MCTP_SOCKET_ERROR_INJECT_H
++
++#include <linux/types.h>
++#include <linux/debugfs.h>
++
++/* Socket-level error injection state */
++struct mctp_socket_error_inject {
++	/* Error injection control */
++	bool enabled;                /* Enable/disable error injection */
++	int error_code;              /* Error to return (e.g. -EBUSY, -EHOSTUNREACH) */
++	
++	/* Statistics */
++	u64 sendmsg_calls;           /* Total sendmsg() calls */
++	u64 errors_injected;         /* Errors injected */
++	
++	/* Debugfs */
++	struct dentry *debugfs_dir;
++	spinlock_t lock;
++};
++
++/* Global instance */
++extern struct mctp_socket_error_inject mctp_socket_ei;
++
++/* Initialize/cleanup */
++int mctp_socket_error_inject_init(void);
++void mctp_socket_error_inject_cleanup(void);
++
++/* Check if error should be injected in sendmsg() */
++int mctp_socket_error_inject_sendmsg(void);
++
++#endif /* __MCTP_SOCKET_ERROR_INJECT_H */
++
+diff --git a/net/mctp/route.c b/net/mctp/route.c
+index 1010f3bd4981..f7d54df104d9 100644
+--- a/net/mctp/route.c
++++ b/net/mctp/route.c
+@@ -29,6 +29,22 @@
+ static const unsigned int mctp_message_maxlen = 64 * 1024;
+ static const unsigned long mctp_key_lifetime = 6 * CONFIG_HZ;
+ 
++/* Helper to determine binding type from network device */
++u8 mctp_get_binding_type(struct net_device *dev)
++{
++	if (!dev)
++		return 0;  /* Unknown */
++
++	if (strstr(dev->name, "mctpusb"))
++		return MCTP_BINDING_USB;
++	else if (strstr(dev->name, "mctpi2c"))
++		return MCTP_BINDING_I2C;
++	else if (strstr(dev->name, "mctppcie"))
++		return MCTP_BINDING_PCIE;
++	
++	return 0;  /* Unknown binding */
++}
++
+ static void mctp_flow_prepare_output(struct sk_buff *skb, struct mctp_dev *dev);
+ 
+ /* route output callbacks */
+@@ -352,7 +368,7 @@ static int mctp_frag_queue(struct mctp_sk_key *key, struct sk_buff *skb)
+ 		return -EINVAL;
+ 
+ 	if (key->reasm_head->len + skb->len > mctp_message_maxlen)
+-		return -EINVAL;
++		return -EMSGSIZE;
+ 
+ 	skb->next = NULL;
+ 	skb->sk = NULL;
+@@ -368,6 +384,126 @@ static int mctp_frag_queue(struct mctp_sk_key *key, struct sk_buff *skb)
+ 	return 0;
+ }
+ 
++/*
++ * mctp_report_rx_missing_som - Report error for middle/end fragment without SOM
++ * @key: RX MCTP key for this transaction (provides addressing for TX key lookup)
++ * @skb: The failed fragment
++ * @mh: MCTP header
++ * @tag: Tag value
++ * @flags: Lock flags (will be used to release/reacquire key->lock)
++ *
++ * This function must be called with key->lock held. It will temporarily release
++ * the lock to report the error (to avoid deadlock), then reacquire it.
++ *
++ * NEW BEHAVIOR: Looks up TX key and only reports if found. This ensures we only
++ * report errors for responses to OUR requests.
++ */
++static void mctp_report_rx_missing_som(struct mctp_sk_key *key,
++				       struct sk_buff *skb,
++				       struct mctp_hdr *mh,
++				       unsigned long tag,
++				       unsigned long *flags)
++{
++	struct sock *sk;
++
++	netdev_err(skb->dev,
++		   "MCTP RX: Middle/End fragment without SOM (src=%u, dest=%u, tag=%lu)\n",
++		   mh->src, mh->dest, tag & MCTP_HDR_TAG_MASK);
++
++	/* CRITICAL: Release key->lock BEFORE error reporting to avoid deadlock.
++	 * mctp_queue_error() needs to acquire keys_lock for TX key lookup, but
++	 * correct lock order is keys_lock → key->lock. We currently hold key->lock,
++	 * so we must release it first.
++	 */
++	spin_unlock_irqrestore(&key->lock, *flags);
++
++	/* Look up socket and report error.
++	 * mctp_queue_error() will look up TX key internally and only report
++	 * if TX key is found (our transaction).
++	 */
++	sk = mctp_lookup_sock_for_error(skb, skb->dev, key, NULL);
++	if (sk) {
++		/* Pass RX key - mctp_queue_error will use it to find TX key */
++		mctp_queue_error(sk, skb, EPROTO, skb->dev, MCTP_DIR_RX,
++				 mctp_get_binding_type(skb->dev), key);
++		sock_put(sk);
++	}
++
++	/* Re-acquire key->lock for caller */
++	spin_lock_irqsave(&key->lock, *flags);
++}
++
++/*
++ * mctp_report_rx_sequence_error - Report RX sequence/size error
++ * @key: RX MCTP key for this transaction (provides addressing for TX key lookup)
++ * @skb: The failed fragment
++ * @mh: MCTP header
++ * @tag: Tag value
++ * @flags: Lock flags (will be used to release/reacquire key->lock)
++ * @err_code: Error code from mctp_frag_queue (-EINVAL or -EMSGSIZE)
++ *
++ * This function must be called with key->lock held. It will temporarily release
++ * the lock to report the error (to avoid deadlock), then reacquire it.
++ *
++ * NEW BEHAVIOR: Looks up TX key and only reports if found. This ensures we only
++ * report errors for responses to OUR requests.
++ */
++static void mctp_report_rx_sequence_error(struct mctp_sk_key *key,
++					  struct sk_buff *skb,
++					  struct mctp_hdr *mh,
++					  unsigned long tag,
++					  unsigned long *flags,
++					  int err_code)
++{
++	struct sock *sk;
++	struct sk_buff *report_skb;
++	u8 exp_seq = (key->last_seq + 1) & MCTP_HDR_SEQ_MASK;
++	u8 this_seq = (mh->flags_seq_tag >> MCTP_HDR_SEQ_SHIFT) & MCTP_HDR_SEQ_MASK;
++	int report_errno;
++
++	/* Determine error type and error code to report */
++	if (err_code == -EMSGSIZE) {
++		netdev_err(skb->dev,
++			   "MCTP RX: Message too large - exceeds 64KB limit (src=%u, dest=%u, tag=%lu)\n",
++			   mh->src, mh->dest, tag & MCTP_HDR_TAG_MASK);
++		report_errno = EMSGSIZE;
++	} else {
++		/* err_code == -EINVAL - sequence error */
++		netdev_err(skb->dev,
++			   "MCTP RX: Sequence error - expected %u, got %u (src=%u, dest=%u, tag=%lu)\n",
++			   exp_seq, this_seq, mh->src, mh->dest,
++			   tag & MCTP_HDR_TAG_MASK);
++		report_errno = EPROTO;
++	}
++
++	/* Use first response fragment (reasm_head) for addressing if available.
++	 * Fall back to failed fragment only if reasm_head is NULL.
++	 */
++	report_skb = key->reasm_head ? key->reasm_head : skb;
++
++	/* CRITICAL: Release key->lock BEFORE error reporting to avoid deadlock.
++	 * mctp_queue_error() needs to acquire keys_lock for TX key lookup, but
++	 * correct lock order is keys_lock → key->lock. We currently hold key->lock,
++	 * so we must release it first.
++	 */
++	spin_unlock_irqrestore(&key->lock, *flags);
++
++	/* Look up socket and report error.
++	 * mctp_queue_error() will look up TX key internally and only report
++	 * if TX key is found (our transaction).
++	 */
++	sk = mctp_lookup_sock_for_error(report_skb, skb->dev, key, NULL);
++	if (sk) {
++		/* Pass RX key - mctp_queue_error will use it to find TX key */
++		mctp_queue_error(sk, report_skb, report_errno, skb->dev, MCTP_DIR_RX,
++				 mctp_get_binding_type(skb->dev), key);
++		sock_put(sk);
++	}
++
++	/* Re-acquire key->lock for caller */
++	spin_lock_irqsave(&key->lock, *flags);
++}
++
+ static int mctp_route_input(struct mctp_route *route, struct sk_buff *skb)
+ {
+ 	struct mctp_sk_key *key, *any_key = NULL;
+@@ -472,10 +608,32 @@ static int mctp_route_input(struct mctp_route *route, struct sk_buff *skb)
+ 				goto out_unlock;
+ 			}
+ 
+-			/* we can queue without the key lock here, as the
+-			 * key isn't observable yet
+-			 */
+-			mctp_frag_queue(key, skb);
++		/* we can queue without the key lock here, as the
++		 * key isn't observable yet
++		 */
++		mctp_frag_queue(key, skb);
++		
++		/* Cache message type and payload from first fragment (SOM) for error reporting.
++		 * If middle/end fragments are missing (timeout), we can still report
++		 * the correct message headers to the application.
++		 * Use skb_network_header() not skb->data for consistency.
++		 */
++		if (skb && skb->len > sizeof(struct mctp_hdr)) {
++			u8 *msg_start = (u8 *)skb_network_header(skb);
++			size_t payload_offset, available, capture_len;
++			
++			/* Capture message type (first byte after MCTP header) */
++			key->orig_msg_type = *(msg_start + sizeof(struct mctp_hdr));
++			
++			/* Capture first 32 bytes of payload (after message type) for RX timeout errors */
++			payload_offset = sizeof(struct mctp_hdr) + 1;
++			if (skb->len > payload_offset) {
++				available = skb->len - payload_offset;
++				capture_len = min_t(size_t, available, sizeof(key->orig_payload));
++				memcpy(key->orig_payload, msg_start + payload_offset, capture_len);
++				key->orig_payload_len = capture_len;
++			}
++		}
+ 
+ 			/* if the key_add fails, we've raced with another
+ 			 * SOM packet with the same src, dest and tag. There's
+@@ -515,11 +673,18 @@ static int mctp_route_input(struct mctp_route *route, struct sk_buff *skb)
+ 		 * using the message-specific key
+ 		 */
+ 
+-		/* we need to be continuing an existing reassembly... */
+-		if (!key->reasm_head)
+-			rc = -EINVAL;
+-		else
+-			rc = mctp_frag_queue(key, skb);
++	/* we need to be continuing an existing reassembly... */
++	if (!key->reasm_head) {
++		rc = -EINVAL;
++		mctp_report_rx_missing_som(key, skb, mh, tag, &f);
++	} else {
++		rc = mctp_frag_queue(key, skb);
++		
++		if (rc == -EINVAL || rc == -EMSGSIZE) {
++			/* Reassembly failure: sequence error (-EINVAL) or message too large (-EMSGSIZE) */
++			mctp_report_rx_sequence_error(key, skb, mh, tag, &f, rc);
++		}
++	}
+ 
+ 		if (rc)
+ 			goto out_unlock;
+@@ -1252,6 +1417,34 @@ int mctp_local_output(struct sock *sk, struct mctp_route *rt,
+ 	hdr->dest = daddr;
+ 	hdr->src = saddr;
+ 
++	/* Capture original message header for error reporting on fragmented messages.
++	 * This ensures that if a middle or end fragment fails, we can still report
++	 * the original header (PLDM Instance ID, etc.) to the application.
++	 */
++	if (key && skb->len > sizeof(struct mctp_hdr)) {
++		unsigned long flags2;
++		size_t payload_offset, available, capture_len;
++
++		spin_lock_irqsave(&key->lock, flags2);
++
++		/* Capture message type (first byte after MCTP header) */
++		key->orig_msg_type = *((u8 *)(skb->data + sizeof(struct mctp_hdr)));
++
++		/* Capture first 32 bytes of payload (after message type) */
++		payload_offset = sizeof(struct mctp_hdr) + 1;
++		available = skb->len - payload_offset;
++		capture_len = min_t(size_t, available, sizeof(key->orig_payload));
++
++		if (capture_len > 0) {
++			memcpy(key->orig_payload, skb->data + payload_offset, capture_len);
++			key->orig_payload_len = capture_len;
++		} else {
++			key->orig_payload_len = 0;
++		}
++
++		spin_unlock_irqrestore(&key->lock, flags2);
++	}
++
+ 	mtu = mctp_route_mtu(rt);
+ 
+ 	if (skb->len + sizeof(struct mctp_hdr) <= mtu) {
+@@ -1778,6 +1971,492 @@ void mctp_routes_exit(void)
+ 	dev_remove_pack(&mctp_packet_type);
+ }
+ 
++/**
++ * mctp_lookup_sock_by_key - Find socket using MCTP key (tag-based lookup)
++ * @skb: The SKB to look up
++ * @dev: The network device
++ * @found_key: Output parameter to return the matched key (optional, can be NULL)
++ *
++ * Uses MCTP tag to uniquely identify which socket sent the packet.
++ * This properly handles multiple applications sending to the same remote EID.
++ * If found_key is non-NULL, returns the matched key via output parameter.
++ * The returned key is still in the hash table (caller should not free it).
++ * Returns a reference to the sock if found (caller must sock_put), NULL otherwise.
++ */
++struct sock *mctp_lookup_sock_by_key(struct sk_buff *skb, struct net_device *dev,
++				     struct mctp_sk_key **found_key)
++{
++	struct net *net = dev_net(dev);
++	struct mctp_dev *mdev;
++	struct mctp_hdr *mh;
++	struct mctp_sk_key *key;
++	struct sock *sk = NULL;
++	unsigned long flags;
++	unsigned int netid;
++	u8 tag;
++
++	/* Initialize output parameter */
++	if (found_key)
++		*found_key = NULL;
++
++	if (!skb || skb->len < sizeof(struct mctp_hdr)) {
++		pr_info("MCTP: lookup_sock_by_key: invalid skb (skb=%p len=%u)\n",
++			skb, skb ? skb->len : 0);
++		return NULL;
++	}
++
++	mh = mctp_hdr(skb);
++	
++	/* Get network ID from device rather than SKB control block.
++	 * In URB completion context, skb->cb may not have valid magic,
++	 * causing WARN_ON in mctp_cb(). We can safely get netid from
++	 * the MCTP device instead.
++	 */
++	rcu_read_lock();
++	mdev = __mctp_dev_get(dev);
++	if (!mdev) {
++		rcu_read_unlock();
++		pr_info("MCTP: lookup_sock_by_key: no mctp_dev for %s\n", dev->name);
++		return NULL;
++	}
++	netid = READ_ONCE(mdev->net);
++	mctp_dev_put(mdev);
++	rcu_read_unlock();
++
++	/* Extract tag from MCTP header (bits 2-0) */
++	tag = mh->flags_seq_tag & MCTP_HDR_TAG_MASK;
++
++	pr_info("MCTP: lookup_sock_by_key: netid=%u src=%u dest=%u tag=%u\n",
++		netid, mh->src, mh->dest, tag);
++
++	/* Look up key in global key table */
++	spin_lock_irqsave(&net->mctp.keys_lock, flags);
++
++	hlist_for_each_entry(key, &net->mctp.keys, hlist) {
++		/* Match by: network, local EID, peer EID, tag */
++		if (key->net != netid)
++			continue;
++
++		/* For TX errors: source = local, dest = peer
++		 * Use wildcard matching to handle MCTP_ADDR_ANY in keys.
++		 * This is critical for Get Endpoint ID (dest=0/NULL) which
++		 * creates keys with peer_addr=MCTP_ADDR_ANY.
++		 */
++		if (!mctp_address_matches(key->local_addr, mh->src))
++			continue;
++		if (!mctp_address_matches(key->peer_addr, mh->dest))
++			continue;
++
++		/* The critical differentiator: TAG */
++		if (key->tag != tag)
++			continue;
++
++	/* Found exact match! */
++	sk = key->sk;
++	if (sk) {
++		sock_hold(sk);
++		/* Return the matched key via output parameter */
++		if (found_key)
++			*found_key = key;
++		pr_info("MCTP: lookup_sock_by_key: FOUND socket %p (key: net=%u local=%u peer=%u tag=%u)\n",
++			sk, key->net, key->local_addr, key->peer_addr, key->tag);
++	}
++	break;
++}
++
++spin_unlock_irqrestore(&net->mctp.keys_lock, flags);
++
++if (!sk) {
++	pr_info("MCTP: lookup_sock_by_key: NO MATCH found for netid=%u src=%u dest=%u tag=%u\n",
++		netid, mh->src, mh->dest, tag);
++}
++
++	return sk;
++}
++EXPORT_SYMBOL_GPL(mctp_lookup_sock_by_key);
++
++/**
++ * mctp_lookup_sock_for_error - Find socket for error reporting
++ * @skb: Packet that failed (contains addressing info)
++ * @dev: Network device
++ * @key: Existing key (if available, may be NULL)
++ * @found_key: Output parameter to return the matched key (optional, can be NULL)
++ *
++ * Finds which socket should receive an error notification for failed
++ * operations WE initiated (our requests/responses).
++ *
++ * Uses two-tier lookup:
++ * 1. Use socket from existing key (if key provided and valid)
++ *    - For RX reassembly errors where key is from reassembly context
++ * 2. Try TX key lookup by tag (for TX errors from drivers)
++ *    - TX key existence indicates operation we initiated
++ *    - No TX key = not our transaction = don't report
++ *    - Returns found key via found_key output parameter
++ *
++ * With BMC-to-device behavior where device uses TO=0 in responses,
++ * TX keys naturally match responses (both have tag value 0-7 only).
++ *
++ * Device-initiated messages won't have TX keys, so errors on those
++ * messages are correctly not reported (not our operations).
++ *
++ * DEADLOCK PREVENTION: Method 2 is skipped if key parameter is provided,
++ * as this indicates call from __mctp_key_remove() which holds keys_lock.
++ *
++ * Returns: Socket with refcount held, or NULL if no socket found or
++ *          error should not be reported. Caller must call sock_put()
++ *          if non-NULL returned.
++ */
++struct sock *mctp_lookup_sock_for_error(struct sk_buff *skb,
++					struct net_device *dev,
++					struct mctp_sk_key *key,
++					struct mctp_sk_key **found_key)
++{
++	struct net *net;
++	struct sock *sk = NULL;
++	struct mctp_hdr *mh;
++	u8 tag;
++
++	/* Initialize output parameter */
++	if (found_key)
++		*found_key = NULL;
++
++	if (!skb || !dev)
++		return NULL;
++
++	if (skb->len < sizeof(struct mctp_hdr))
++		return NULL;
++
++	net = dev_net(dev);
++	mh = mctp_hdr(skb);
++	/* Extract tag value only (0-7), not TO bit.
++	 * With BMC-to-device behavior where device uses TO=0 in responses,
++	 * this naturally matches TX keys which are also stored without TO bit.
++	 */
++	tag = mh->flags_seq_tag & MCTP_HDR_TAG_MASK;
++
++	/* Method 1: Use existing key socket (fastest path) */
++	if (key && key->sk) {
++		struct mctp_sock *check_msk = container_of(key->sk, struct mctp_sock, sk);
++		
++		/* Check if socket is still valid and open */
++		if (sock_flag(&check_msk->sk, SOCK_DEAD)) {
++			pr_debug("MCTP error: key socket is dead (closed)\n");
++			return NULL;
++		}
++		
++		/* Skip if this socket doesn't have error queue enabled */
++		if (!check_msk->enable_errqueue) {
++			pr_debug("MCTP error: key socket found but error queue disabled (src=%u, dest=%u, tag=%u)\n",
++				 mh->src, mh->dest, tag);
++			return NULL;
++		}
++		
++		sk = key->sk;
++		sock_hold(sk);
++		/* Return the key via output parameter */
++		if (found_key)
++			*found_key = key;
++		pr_debug("MCTP error: socket via key (src=%u, dest=%u, tag=%u)\n",
++			 mh->src, mh->dest, tag);
++		return sk;
++	}
++
++	/* Method 2: Try TX key lookup (for TX errors from drivers)
++	 * 
++	 * Searches for TX keys by (netid, local_eid, peer_eid, tag).
++	 * TX key existence indicates operation WE initiated.
++	 * No TX key = not our transaction = don't report error.
++	 * 
++	 * DEADLOCK PREVENTION: Skip this method if key parameter is provided,
++	 * as this indicates call from __mctp_key_remove() which holds keys_lock.
++	 * mctp_lookup_sock_by_key() also needs keys_lock, causing deadlock.
++	 */
++	if (!key) {
++		struct mctp_sk_key *tx_key = NULL;
++		
++		/* Safe to do key lookup - not called from __mctp_key_remove() */
++		sk = mctp_lookup_sock_by_key(skb, dev, &tx_key);
++		if (sk) {
++			struct mctp_sock *check_msk = container_of(sk, struct mctp_sock, sk);
++			
++			/* Check if socket is still valid and open */
++			if (sock_flag(&check_msk->sk, SOCK_DEAD)) {
++				pr_debug("MCTP error: TX key socket is dead (closed)\n");
++				sock_put(sk);
++				return NULL;
++			}
++			
++			/* Skip if this socket doesn't have error queue enabled */
++			if (!check_msk->enable_errqueue) {
++				pr_debug("MCTP error: TX key socket found but error queue disabled (src=%u, dest=%u, tag=%u)\n",
++					 mh->src, mh->dest, tag);
++				sock_put(sk);
++				return NULL;
++			}
++			
++			/* Return the found TX key via output parameter */
++			if (found_key)
++				*found_key = tx_key;
++			
++			pr_debug("MCTP error: socket via TX key lookup (src=%u, dest=%u, tag=%u)\n",
++				 mh->src, mh->dest, tag);
++			return sk;
++		}
++		
++		/* No TX key found = not our transaction = don't report error */
++		pr_debug("MCTP error: No TX key found, not our transaction (src=%u, dest=%u, tag=%u)\n",
++			 mh->src, mh->dest, tag);
++	}
++
++	/* If we reach here:
++	 * - key parameter provided: called from __mctp_key_remove()
++	 *   Method 2 skipped for deadlock prevention
++	 * - OR Method 2 found no TX key: not our transaction
++	 * 
++	 * In either case, don't report error.
++	 */
++	return NULL;
++}
++EXPORT_SYMBOL_GPL(mctp_lookup_sock_for_error);
++
++/**
++ * mctp_lookup_tx_key_for_rx_error - Look up TX key for RX error reporting
++ * @net: Network namespace
++ * @netid: MCTP network ID
++ * @local_eid: Local EID (from RX packet dest)
++ * @peer_eid: Peer EID (from RX packet src)
++ * @tag: Tag value (without TO bit)
++ *
++ * For RX errors, we need to find the original TX request to report the
++ * correct payload to the application. This function looks up the TX key
++ * by reversing the addressing from the RX packet.
++ *
++ * Returns: TX key with refcount incremented, or NULL if not found
++ */
++static struct mctp_sk_key *mctp_lookup_tx_key_for_rx_error(struct net *net,
++							    unsigned int netid,
++							    mctp_eid_t local_eid,
++							    mctp_eid_t peer_eid,
++							    u8 tag)
++{
++	struct mctp_sk_key *key, *ret = NULL;
++	unsigned long flags;
++
++	/* For RX errors, the TX key was created with:
++	 * - local_addr = local_eid (our address when we sent request)
++	 * - peer_addr = peer_eid (who we sent to)
++	 * - tag = tag value (without TO bit, as TX key stores incoming perspective)
++	 */
++	spin_lock_irqsave(&net->mctp.keys_lock, flags);
++	hlist_for_each_entry(key, &net->mctp.keys, hlist) {
++		if (!mctp_key_match(key, netid, local_eid, peer_eid, tag))
++			continue;
++
++		spin_lock(&key->lock);
++		if (key->valid && key->orig_payload_len > 0) {
++			refcount_inc(&key->refs);
++			ret = key;
++			spin_unlock(&key->lock);
++			break;
++		}
++		spin_unlock(&key->lock);
++	}
++	spin_unlock_irqrestore(&net->mctp.keys_lock, flags);
++
++	pr_debug("mctp_lookup_tx_key_for_rx_error: netid=%u local=%u peer=%u tag=%u -> %s\n",
++		 netid, local_eid, peer_eid, tag, ret ? "FOUND" : "NOT FOUND");
++
++	return ret;
++}
++
++/**
++ * mctp_queue_error - Queue error to socket error queue
++ * @sk: Socket to report error to
++ * @skb: SKB that failed (contains addressing info)
++ * @error_code: errno value (EPROTO, ETIMEDOUT, EMSGSIZE for RX; EHOSTUNREACH, ENXIO for TX)
++ * @dev: Network device (used to extract MCTP network ID)
++ * @direction: MCTP_DIR_TX or MCTP_DIR_RX
++ * @binding: MCTP_BINDING_USB, MCTP_BINDING_I2C, etc.
++ * @rx_key: For RX errors, the RX key (provides addressing). For TX errors, the TX key.
++ *
++ * Builds an mctp_error structure and queues it to the socket's error queue.
++ * Applications can read this via recvmsg(MSG_ERRQUEUE).
++ *
++ * Strategy:
++ * - TX errors: Use provided TX key's orig_payload (captured before fragmentation)
++ * - RX errors: Look up TX key using addressing from RX key/SKB, use TX key's orig_payload
++ *              (the original request we sent). Only report if TX key found - this ensures
++ *              we only report errors for responses to OUR requests, not unsolicited packets.
++ *
++ * This ensures applications always receive the REQUEST payload for both TX and RX errors,
++ * allowing them to identify which transaction failed.
++ *
++ * Common error codes:
++ *   RX errors: EPROTO (sequence error), ETIMEDOUT (reassembly timeout), EMSGSIZE (too large)
++ *   TX errors: EHOSTUNREACH, ENXIO, ENODEV, ESHUTDOWN, ENOMEM, EPROTO, etc.
++ */
++void mctp_queue_error(struct sock *sk, struct sk_buff *skb,
++		      int error_code, struct net_device *dev, u8 direction, u8 binding,
++		      struct mctp_sk_key *rx_key)
++{
++	struct mctp_sock *msk = container_of(sk, struct mctp_sock, sk);
++	struct mctp_sk_key *tx_key = NULL;
++	struct mctp_error *mctp_err;
++	struct sk_buff *err_skb;
++	struct mctp_hdr *mh;
++	struct mctp_dev *mdev;
++	unsigned int netid;
++	size_t capture_len;
++	bool key_found = false;
++
++	/* Extract network ID from device.
++	 * This is safer than using skb->cb which may be corrupted by qdisc.
++	 */
++	rcu_read_lock();
++	mdev = __mctp_dev_get(dev);
++	if (!mdev) {
++		rcu_read_unlock();
++		pr_debug("MCTP: Failed to get mctp_dev for error reporting\n");
++		return;
++	}
++	netid = READ_ONCE(mdev->net);
++	mctp_dev_put(mdev);
++	rcu_read_unlock();
++
++	if (!msk->enable_errqueue) {
++		pr_debug("MCTP: Error queue not enabled, skipping error report\n");
++		return;
++	}
++
++	/* Extract addressing from SKB */
++	if (!skb || skb->len < sizeof(struct mctp_hdr)) {
++		pr_debug("MCTP: Invalid SKB for error reporting\n");
++		return;
++	}
++	mh = mctp_hdr(skb);
++
++	/* Determine payload source based on error type.
++	 * 
++	 * TX errors: Use TX key's orig_payload (captured before fragmentation)
++	 * RX timeout: Use RX key's orig_payload (original REQUEST we sent)
++	 * RX other errors: Look up TX key to report original request
++	 */
++	if (direction == MCTP_DIR_TX) {
++		/* TX error: Use provided TX key directly */
++		tx_key = rx_key;
++		if (tx_key && tx_key->orig_payload_len > 0) {
++			key_found = true;
++			pr_debug("mctp_queue_error: TX error - using TX key (orig_payload_len=%u)\n",
++				 tx_key->orig_payload_len);
++		} else {
++			pr_debug("mctp_queue_error: TX error - no valid TX key, NOT REPORTING\n");
++		}
++		
++		if (!key_found || !tx_key || tx_key->orig_payload_len == 0) {
++			return;
++		}
++	} else if (error_code == ETIMEDOUT) {
++		/* RX reassembly timeout: Use RX key's orig_payload (original REQUEST).
++		 * For TX-originated keys (BMC request → device response), orig_payload
++		 * was captured during TX phase and contains the REQUEST we sent.
++		 * This allows applications to identify which transaction timed out.
++		 * If no orig_payload, this is an unsolicited request - don't report.
++		 */
++		tx_key = rx_key;  /* RX key IS the TX key (same key reused for response) */
++		if (tx_key && tx_key->orig_payload_len > 0) {
++			key_found = true;
++			pr_debug("mctp_queue_error: RX timeout - using TX key orig_payload (REQUEST, len=%u)\n",
++				 tx_key->orig_payload_len);
++		} else {
++			pr_debug("mctp_queue_error: RX timeout - no TX origin (unsolicited), NOT REPORTING\n");
++			return;
++		}
++	} else {
++		/* RX error (SOM, sequence): Look up TX key by reversing src/dest.
++		 * Response came FROM peer (mh->src) TO us (mh->dest).
++		 * Our original request was FROM us (mh->dest) TO peer (mh->src).
++		 */
++		u8 tag = mh->flags_seq_tag & MCTP_HDR_TAG_MASK;
++		
++		pr_debug("mctp_queue_error: RX error - looking up TX key (local=%u, peer=%u, tag=%u)\n",
++			 mh->dest, mh->src, tag);
++		
++		tx_key = mctp_lookup_tx_key_for_rx_error(dev_net(dev), netid,
++							 mh->dest, mh->src, tag);
++		if (tx_key) {
++			key_found = true;
++			pr_debug("mctp_queue_error: RX error - TX key FOUND, will report error\n");
++		} else {
++			pr_debug("mctp_queue_error: RX error - TX key NOT FOUND, NOT REPORTING (unsolicited)\n");
++			return;
++		}
++		
++		if (!tx_key || tx_key->orig_payload_len == 0) {
++			pr_debug("mctp_queue_error: RX error - TX key has no orig_payload, NOT REPORTING\n");
++			mctp_key_unref(tx_key);
++			return;
++		}
++	}
++
++	/* Allocate SKB for error */
++	err_skb = alloc_skb(sizeof(*mctp_err), GFP_ATOMIC);
++	if (!err_skb) {
++		if (direction == MCTP_DIR_RX)
++			mctp_key_unref(tx_key);
++		return;
++	}
++
++	/* Build error structure */
++	mctp_err = (struct mctp_error *)skb_put(err_skb, sizeof(*mctp_err));
++	memset(mctp_err, 0, sizeof(*mctp_err));
++
++	/* Fill basic error information */
++	mctp_err->error_code = error_code;
++	mctp_err->direction = direction;
++	mctp_err->binding = binding;
++	mctp_err->timestamp_ns = ktime_get_ns();
++
++	/* Fill addressing from SKB */
++	mctp_err->src_eid = mh->src;
++	mctp_err->dest_eid = mh->dest;
++	mctp_err->tag = mh->flags_seq_tag & MCTP_HDR_TAG_MASK;
++
++	/* Extract payload - ALL error types now use TX key's orig_payload (original REQUEST).
++	 * This ensures applications always receive the REQUEST payload, allowing them to
++	 * identify which transaction failed, regardless of error type.
++	 * 
++	 * TX errors: TX key provided directly
++	 * RX timeout: RX key (which is the TX key) has orig_payload from TX phase
++	 * RX SOM/seq: TX key looked up by reversing src/dest addressing
++	 */
++	if (tx_key) {
++		/* Use TX key payload (original REQUEST for all error types) */
++		mctp_err->msg_type = tx_key->orig_msg_type;
++		capture_len = min_t(size_t, tx_key->orig_payload_len,
++				   MCTP_ERROR_PAYLOAD_SIZE);
++		memcpy(mctp_err->payload, tx_key->orig_payload, capture_len);
++		mctp_err->payload_len = capture_len;
++
++		/* Release TX key if we looked it up (RX non-timeout case) */
++		if (direction == MCTP_DIR_RX && error_code != ETIMEDOUT)
++			mctp_key_unref(tx_key);
++	}
++
++	/* Queue error to socket */
++	if (sock_queue_err_skb(sk, err_skb) == 0) {
++		/* Successfully queued, trigger error report */
++		sk_error_report(sk);
++		pr_debug("mctp_queue_error: Error queued successfully (code=%d, %s, src=%u->dest=%u)\n",
++			 error_code, direction == MCTP_DIR_TX ? "TX" : "RX",
++			 mctp_err->src_eid, mctp_err->dest_eid);
++	} else {
++		/* Failed to queue - free the SKB to avoid memory leak */
++		kfree_skb(err_skb);
++		pr_debug("mctp_queue_error: Failed to queue error to socket\n");
++	}
++}
++EXPORT_SYMBOL_GPL(mctp_queue_error);
++
+ #if IS_ENABLED(CONFIG_MCTP_TEST)
+ #include "test/route-test.c"
+ #endif
+-- 
+2.34.1
+

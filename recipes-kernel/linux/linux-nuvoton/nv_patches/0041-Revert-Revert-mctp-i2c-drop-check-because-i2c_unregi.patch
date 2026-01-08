@@ -1,0 +1,29 @@
+From 4f35f71bc988d3f800f0eaa06facaf005baca0e1 Mon Sep 17 00:00:00 2001
+From: Leo Huang <leohu@nvidia.com>
+Date: Thu, 20 Nov 2025 05:08:34 -0800
+Subject: [PATCH] Revert "Revert "mctp i2c: drop check because
+ i2c_unregister_device() is NULL safe""
+
+This reverts commit 3508988bc916c3e375996df7c0a4181ec9e7b0eb.
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/net/mctp/mctp-i2c.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/drivers/net/mctp/mctp-i2c.c b/drivers/net/mctp/mctp-i2c.c
+index dd0eba045aa4..242868326c74 100644
+--- a/drivers/net/mctp/mctp-i2c.c
++++ b/drivers/net/mctp/mctp-i2c.c
+@@ -182,8 +182,7 @@ static struct mctp_i2c_client *mctp_i2c_new_client(struct i2c_client *client)
+ 	return mcli;
+ err:
+ 	if (mcli) {
+-		if (mcli->client)
+-			i2c_unregister_device(mcli->client);
++		i2c_unregister_device(mcli->client);
+ 		kfree(mcli);
+ 	}
+ 	return ERR_PTR(rc);
+-- 
+2.43.0
+

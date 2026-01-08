@@ -1,0 +1,27 @@
+From ee152fd9ac571e14b38f8ac78e45ac703bef0067 Mon Sep 17 00:00:00 2001
+From: mateuszmydlarz <mateusz.mydlarz@conclusive.pl>
+Date: Mon, 20 Feb 2023 10:45:23 +0100
+Subject: [PATCH] Simple fix driver i2c slave mqueue. Fixes JIRA
+ https://jirasw.nvidia.com/browse/DGXOPENBMC-5723
+
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/i2c/i2c-slave-mqueue.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/i2c/i2c-slave-mqueue.c b/drivers/i2c/i2c-slave-mqueue.c
+index 1d4db584b393..c020433f82a9 100644
+--- a/drivers/i2c/i2c-slave-mqueue.c
++++ b/drivers/i2c/i2c-slave-mqueue.c
+@@ -159,7 +159,7 @@ static int i2c_slave_mqueue_probe(struct i2c_client *client,
+ 
+ 	mq->queue = devm_kzalloc(dev, sizeof(*mq->queue) * MQ_QUEUE_SIZE,
+ 				 GFP_KERNEL);
+-	if (!buf)
++	if (!mq->queue)
+ 		return -ENOMEM;
+ 
+ 	for (i = 0; i < MQ_QUEUE_SIZE; i++)
+-- 
+2.43.0
+

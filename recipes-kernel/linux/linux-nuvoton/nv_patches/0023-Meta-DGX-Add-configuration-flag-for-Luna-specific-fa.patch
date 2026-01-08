@@ -1,0 +1,66 @@
+From 0de1bec1d2d8248134ed6be1aed7271b8b10747a Mon Sep 17 00:00:00 2001
+From: deepaky <deepaky@nvidia.com>
+Date: Thu, 19 Jan 2023 02:42:03 -0800
+Subject: [PATCH] [Meta-DGX] Add configuration flag for Luna specific fan
+ configuration.
+
+Fixes JIRA https://jirasw.nvidia.com/browse/DGXOPENBMC-6026
+
+Testing: Compilation done for dgx-a100 platform
+
+Signed-off-by: Deepak Yadav(deepaky@nvidia.com)
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/hwmon/Kconfig    | 6 ++++++
+ drivers/hwmon/max31790.c | 4 ++++
+ 2 files changed, 10 insertions(+)
+
+diff --git a/drivers/hwmon/Kconfig b/drivers/hwmon/Kconfig
+index 08a3c863f80a..e7c3493643f1 100644
+--- a/drivers/hwmon/Kconfig
++++ b/drivers/hwmon/Kconfig
+@@ -1284,6 +1284,12 @@ config SENSORS_MC34VR500
+ 	  If you say yes here you get support for the temperature and input
+ 	  voltage sensors of the NXP MC34VR500.
+ 
++config LUNA_FAN
++	bool "Fan config flag for LUNA"
++	help
++	  This enables all the necessary code for the support of the
++	  Fan configuration.
++
+ config SENSORS_MCP3021
+ 	tristate "Microchip MCP3021 and compatibles"
+ 	depends on I2C
+diff --git a/drivers/hwmon/max31790.c b/drivers/hwmon/max31790.c
+index 807210beb8a2..528c4cea93b1 100644
+--- a/drivers/hwmon/max31790.c
++++ b/drivers/hwmon/max31790.c
+@@ -486,6 +486,7 @@ static const struct hwmon_chip_info max31790_chip_info = {
+ 	.info = max31790_info,
+ };
+ 
++#if CONFIG_LUNA_FAN
+ static void Luna_pwm_enable(struct i2c_client *client,
+ 				struct max31790_data *data)
+ {
+@@ -497,13 +498,16 @@ static void Luna_pwm_enable(struct i2c_client *client,
+ 	}
+ 	i2c_smbus_write_byte_data(client, MAX31790_REG_FAN_CONFIG(0), 0x48);
+ }
++#endif
+ 
+ static int max31790_init_client(struct i2c_client *client,
+ 				struct max31790_data *data)
+ {
+ 	int i, rv;
+ 
++#if CONFIG_LUNA_FAN
+ 	Luna_pwm_enable(client, data);
++#endif
+ 
+ 	for (i = 0; i < NR_CHANNEL; i++) {
+ 		rv = i2c_smbus_read_byte_data(client,
+-- 
+2.43.0
+

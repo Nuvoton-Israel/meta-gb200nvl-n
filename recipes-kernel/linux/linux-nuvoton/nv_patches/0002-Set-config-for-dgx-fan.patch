@@ -1,0 +1,48 @@
+From 4f9dda96e604e5d58a14f72299e47c8d3c849bd6 Mon Sep 17 00:00:00 2001
+From: Ben Pai <ben_pai@wistron.com>
+Date: Wed, 5 Mar 2025 22:45:29 -0800
+Subject: [PATCH] Set config for dgx fan
+
+Dgx fan needs to set config during initialization to ensure that the
+correct sensor is generated.
+
+Signed-off-by: Nichole Wang <Nichole_Wang@wistron.com>
+Signed-off-by: Ben Pai <Ben_Pai@wistron.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/hwmon/max31790.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/drivers/hwmon/max31790.c b/drivers/hwmon/max31790.c
+index f56913327004..807210beb8a2 100644
+--- a/drivers/hwmon/max31790.c
++++ b/drivers/hwmon/max31790.c
+@@ -486,11 +486,25 @@ static const struct hwmon_chip_info max31790_chip_info = {
+ 	.info = max31790_info,
+ };
+ 
++static void Luna_pwm_enable(struct i2c_client *client,
++				struct max31790_data *data)
++{
++	int i;
++	for(i = 0; i < NR_CHANNEL; i++)
++	{
++		i2c_smbus_write_byte_data(client, MAX31790_REG_FAN_CONFIG(i), 0x09);
++		i2c_smbus_write_byte_data(client, MAX31790_REG_FAN_DYNAMICS(i), 0x8c);
++	}
++	i2c_smbus_write_byte_data(client, MAX31790_REG_FAN_CONFIG(0), 0x48);
++}
++
+ static int max31790_init_client(struct i2c_client *client,
+ 				struct max31790_data *data)
+ {
+ 	int i, rv;
+ 
++	Luna_pwm_enable(client, data);
++
+ 	for (i = 0; i < NR_CHANNEL; i++) {
+ 		rv = i2c_smbus_read_byte_data(client,
+ 				MAX31790_REG_FAN_CONFIG(i));
+-- 
+2.43.0
+

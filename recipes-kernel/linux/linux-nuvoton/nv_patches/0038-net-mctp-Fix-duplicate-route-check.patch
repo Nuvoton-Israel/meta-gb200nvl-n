@@ -1,0 +1,85 @@
+From c30464f945a802e592a05b9b03fed8de61d6de2a Mon Sep 17 00:00:00 2001
+From: Santosh Puranik <spuranik@nvidia.com>
+Date: Tue, 11 Nov 2025 23:00:14 +0530
+Subject: [PATCH] net: mctp: Fix duplicate route check
+
+When adding routes for local addresses, allow for multiple routes across
+different netdev interfaces (Different interfaces are allowed to have
+the same local EID).
+
+This fixes a bug where if the interface where we added the local route
+is removed (such as on a hotplug out), packets destined to our local EID
+would be dropped as no other routes to them would exist.
+
+Fixes JIRA https://
+
+Tested:
+
+```
+Tested this on a Parsec HMC by toggling the reset GPIO of the GPU MCU.
+Ensured the following:
+
+That we now see multiple routes to the local EIDi (EID 8 is in both usb
+interfaces):
+
+~# mctp route
+eid min 10 max 10 net 1 dev mctpusb0 mtu 0
+eid min 8 max 8 net 1 dev mctpusb0 mtu 0
+eid min 23 max 23 net 1 dev mctpi2c7 mtu 0
+eid min 20 max 20 net 1 dev mctpusb1 mtu 0
+eid min 9 max 9 net 1 dev mctpspi0_2 mtu 0
+eid min 30 max 30 net 1 dev mctpspi0_2 mtu 0
+eid min 8 max 8 net 1 dev mctpusb1 mtu 0
+eid min 200 max 200 net 1 dev mctpi2c1 mtu 0
+eid min 201 max 201 net 1 dev mctpi2c7 mtu 0
+
+Removing one MCU still retains the other route:
+
+gpioset gpiochip2 2=0
+
+~# mctp route
+eid min 23 max 23 net 1 dev mctpi2c7 mtu 0
+eid min 20 max 20 net 1 dev mctpusb1 mtu 0
+eid min 9 max 9 net 1 dev mctpspi0_2 mtu 0
+eid min 30 max 30 net 1 dev mctpspi0_2 mtu 0
+eid min 8 max 8 net 1 dev mctpusb1 mtu 0
+eid min 200 max 200 net 1 dev mctpi2c1 mtu 0
+eid min 201 max 201 net 1 dev mctpi2c7 mtu 0
+
+```
+
+Signed-off-by: Santosh Puranik <spuranik@nvidia.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ net/mctp/route.c | 15 ++++++++++++---
+ 1 file changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/net/mctp/route.c b/net/mctp/route.c
+index 8a7571d66077..114c530e0cd2 100644
+--- a/net/mctp/route.c
++++ b/net/mctp/route.c
+@@ -822,9 +822,18 @@ static bool mctp_rt_compare_exact(struct mctp_route *rt1,
+ 				  struct mctp_route *rt2)
+ {
+ 	ASSERT_RTNL();
+-	return rt1->dev->net == rt2->dev->net &&
+-		rt1->min == rt2->min &&
+-		rt1->max == rt2->max;
++
++	if (rt1->dev->net != rt2->dev->net)
++		return false;
++
++	if (rt1->max < rt2->min || rt1->min > rt2->max)
++		return false;
++
++	if (rt1->type == RTN_LOCAL && rt2->type == RTN_LOCAL &&
++	    rt1->dev != rt2->dev)
++		return false;
++
++	return true;
+ }
+ 
+ struct mctp_route *mctp_route_lookup(struct net *net, unsigned int dnet,
+-- 
+2.43.0
+

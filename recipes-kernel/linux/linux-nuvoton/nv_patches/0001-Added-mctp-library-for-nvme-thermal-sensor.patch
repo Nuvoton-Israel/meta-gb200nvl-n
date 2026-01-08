@@ -1,0 +1,347 @@
+From 4da6899ee26117f7f0c265b1c96883898fd3d493 Mon Sep 17 00:00:00 2001
+From: Marvin Lin <milkfafa@gmail.com>
+Date: Fri, 19 Dec 2025 10:52:52 +0800
+Subject: [PATCH] Added mctp library for nvme thermal sensor
+
+Using MCTP library from Intel-BMC.
+
+Signed-off-by: Ben Pai <ben_pai@wistron.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/i2c/i2c-slave-mqueue.c | 60 +++++++++++++++++------
+ include/asm/rwonce.h           | 90 ++++++++++++++++++++++++++++++++++
+ include/linux/i2c.h            | 27 ++++++++++
+ include/uapi/linux/i2c.h       |  1 +
+ 4 files changed, 163 insertions(+), 15 deletions(-)
+ create mode 100644 include/asm/rwonce.h
+
+diff --git a/drivers/i2c/i2c-slave-mqueue.c b/drivers/i2c/i2c-slave-mqueue.c
+index 527bbb926926..1d4db584b393 100644
+--- a/drivers/i2c/i2c-slave-mqueue.c
++++ b/drivers/i2c/i2c-slave-mqueue.c
+@@ -4,7 +4,6 @@
+ #include <linux/i2c.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+-#include <linux/device.h>
+ #include <linux/of.h>
+ #include <linux/slab.h>
+ #include <linux/spinlock.h>
+@@ -22,6 +21,7 @@ struct mq_msg {
+ struct mq_queue {
+ 	struct bin_attribute	bin;
+ 	struct kernfs_node	*kn;
++	struct i2c_client	*client;
+ 
+ 	spinlock_t		lock; /* spinlock for queue index handling */
+ 	int			in;
+@@ -29,9 +29,24 @@ struct mq_queue {
+ 
+ 	struct mq_msg		*curr;
+ 	int			truncated; /* drop current if truncated */
+-	struct mq_msg		queue[MQ_QUEUE_SIZE];
++	struct mq_msg		*queue;
+ };
+ 
++static bool dump_debug __read_mostly;
++static int dump_debug_bus_id __read_mostly;
++
++#define I2C_HEX_DUMP(client, buf, len) \
++	do { \
++		if (dump_debug && \
++		    (client)->adapter->nr == dump_debug_bus_id) { \
++			char dump_info[100] = {0,}; \
++			snprintf(dump_info, sizeof(dump_info), \
++				 "bus_id:%d: ", (client)->adapter->nr); \
++			print_hex_dump(KERN_ERR, dump_info, DUMP_PREFIX_NONE, \
++				       16, 1, buf, len, true); \
++		} \
++	} while (0)
++
+ static int i2c_slave_mqueue_callback(struct i2c_client *client,
+ 				     enum i2c_slave_event event, u8 *val)
+ {
+@@ -41,10 +56,12 @@ static int i2c_slave_mqueue_callback(struct i2c_client *client,
+ 
+ 	switch (event) {
+ 	case I2C_SLAVE_WRITE_REQUESTED:
++	case I2C_SLAVE_GCALL_REQUESTED:
+ 		mq->truncated = 0;
+ 
+ 		msg->len = 1;
+-		msg->buf[0] = client->addr << 1;
++		msg->buf[0] = event == I2C_SLAVE_GCALL_REQUESTED ?
++			      0 : client->addr << 1;
+ 		break;
+ 
+ 	case I2C_SLAVE_WRITE_RECEIVED:
+@@ -93,7 +110,7 @@ static ssize_t i2c_slave_mqueue_bin_read(struct file *filp,
+ 	bool more = false;
+ 	ssize_t ret = 0;
+ 
+-	mq = dev_get_drvdata(kobj_to_dev(kobj));
++	mq = dev_get_drvdata(container_of(kobj, struct device, kobj));
+ 
+ 	spin_lock_irqsave(&mq->lock, flags);
+ 	if (mq->out != mq->in) {
+@@ -102,6 +119,7 @@ static ssize_t i2c_slave_mqueue_bin_read(struct file *filp,
+ 		if (msg->len <= count) {
+ 			ret = msg->len;
+ 			memcpy(buf, msg->buf, ret);
++			I2C_HEX_DUMP(mq->client, buf, ret);
+ 		} else {
+ 			ret = -EOVERFLOW; /* Drop this HUGE one. */
+ 		}
+@@ -118,25 +136,32 @@ static ssize_t i2c_slave_mqueue_bin_read(struct file *filp,
+ 	return ret;
+ }
+ 
+-static int i2c_slave_mqueue_probe(struct i2c_client *client)
++static int i2c_slave_mqueue_probe(struct i2c_client *client,
++				  const struct i2c_device_id *id)
+ {
+ 	struct device *dev = &client->dev;
+-	const struct i2c_device_id *id = i2c_client_get_device_id(client);
+ 	struct mq_queue *mq;
+ 	int ret, i;
+ 	void *buf;
+ 
+-	BUILD_BUG_ON(!is_power_of_2(MQ_QUEUE_SIZE));
+-
+ 	mq = devm_kzalloc(dev, sizeof(*mq), GFP_KERNEL);
+ 	if (!mq)
+ 		return -ENOMEM;
+ 
++	BUILD_BUG_ON(!is_power_of_2(MQ_QUEUE_SIZE));
++
++	mq->client = client;
++
+ 	buf = devm_kmalloc_array(dev, MQ_QUEUE_SIZE, MQ_MSGBUF_SIZE,
+ 				 GFP_KERNEL);
+ 	if (!buf)
+ 		return -ENOMEM;
+ 
++	mq->queue = devm_kzalloc(dev, sizeof(*mq->queue) * MQ_QUEUE_SIZE,
++				 GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
+ 	for (i = 0; i < MQ_QUEUE_SIZE; i++)
+ 		mq->queue[i].buf = buf + i * MQ_MSGBUF_SIZE;
+ 
+@@ -171,7 +196,7 @@ static int i2c_slave_mqueue_probe(struct i2c_client *client)
+ 	return 0;
+ }
+ 
+-static void i2c_slave_mqueue_remove(struct i2c_client *client)
++static int i2c_slave_mqueue_remove(struct i2c_client *client)
+ {
+ 	struct mq_queue *mq = i2c_get_clientdata(client);
+ 
+@@ -179,20 +204,20 @@ static void i2c_slave_mqueue_remove(struct i2c_client *client)
+ 
+ 	kernfs_put(mq->kn);
+ 	sysfs_remove_bin_file(&client->dev.kobj, &mq->bin);
++
++	return 0;
+ }
+ 
+ static const struct i2c_device_id i2c_slave_mqueue_id[] = {
+ 	{ "slave-mqueue", 0 },
+-	{ /* sentinel */ }
++	{ }
+ };
+ MODULE_DEVICE_TABLE(i2c, i2c_slave_mqueue_id);
+ 
+-#ifdef CONFIG_OF
++#if IS_ENABLED(CONFIG_OF)
+ static const struct of_device_id i2c_slave_mqueue_of_match[] = {
+-	{
+-		.compatible = "i2c-slave-mqueue",
+-	},
+-	{ /* sentinel */ }
++	{ .compatible = "slave-mqueue", .data = (void *)0 },
++	{ },
+ };
+ MODULE_DEVICE_TABLE(of, i2c_slave_mqueue_of_match);
+ #endif
+@@ -208,6 +233,11 @@ static struct i2c_driver i2c_slave_mqueue_driver = {
+ };
+ module_i2c_driver(i2c_slave_mqueue_driver);
+ 
++module_param_named(dump_debug, dump_debug, bool, 0644);
++MODULE_PARM_DESC(dump_debug, "debug flag for dump printing");
++module_param_named(dump_debug_bus_id, dump_debug_bus_id, int, 0644);
++MODULE_PARM_DESC(dump_debug_bus_id, "bus id for dump debug printing");
++
+ MODULE_LICENSE("GPL v2");
+ MODULE_AUTHOR("Haiyue Wang <haiyue.wang@linux.intel.com>");
+ MODULE_DESCRIPTION("I2C slave mode for receiving and queuing messages");
+diff --git a/include/asm/rwonce.h b/include/asm/rwonce.h
+new file mode 100644
+index 000000000000..11619bdbebae
+--- /dev/null
++++ b/include/asm/rwonce.h
+@@ -0,0 +1,90 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Prevent the compiler from merging or refetching reads or writes. The
++ * compiler is also forbidden from reordering successive instances of
++ * READ_ONCE and WRITE_ONCE, but only when the compiler is aware of some
++ * particular ordering. One way to make the compiler aware of ordering is to
++ * put the two invocations of READ_ONCE or WRITE_ONCE in different C
++ * statements.
++ *
++ * These two macros will also work on aggregate data types like structs or
++ * unions.
++ *
++ * Their two major use cases are: (1) Mediating communication between
++ * process-level code and irq/NMI handlers, all running on the same CPU,
++ * and (2) Ensuring that the compiler does not fold, spindle, or otherwise
++ * mutilate accesses that either do not require ordering or that interact
++ * with an explicit memory barrier or atomic instruction that provides the
++ * required ordering.
++ */
++#ifndef __ASM_GENERIC_RWONCE_H
++#define __ASM_GENERIC_RWONCE_H
++
++#ifndef __ASSEMBLY__
++
++#include <linux/compiler_types.h>
++#include <linux/kasan-checks.h>
++#include <linux/kcsan-checks.h>
++
++/*
++ * Yes, this permits 64-bit accesses on 32-bit architectures. These will
++ * actually be atomic in some cases (namely Armv7 + LPAE), but for others we
++ * rely on the access being split into 2x32-bit accesses for a 32-bit quantity
++ * (e.g. a virtual address) and a strong prevailing wind.
++ */
++#define compiletime_assert_rwonce_type(t)					\
++	compiletime_assert(__native_word(t) || sizeof(t) == sizeof(long long),	\
++		"Unsupported access size for {READ,WRITE}_ONCE().")
++
++/*
++ * Use __READ_ONCE() instead of READ_ONCE() if you do not require any
++ * atomicity. Note that this may result in tears!
++ */
++#ifndef __READ_ONCE
++#define __READ_ONCE(x)	(*(const volatile __unqual_scalar_typeof(x) *)&(x))
++#endif
++
++#define READ_ONCE(x)							\
++({									\
++	compiletime_assert_rwonce_type(x);				\
++	__READ_ONCE(x);							\
++})
++
++#define __WRITE_ONCE(x, val)						\
++do {									\
++	*(volatile typeof(x) *)&(x) = (val);				\
++} while (0)
++
++#define WRITE_ONCE(x, val)						\
++do {									\
++	compiletime_assert_rwonce_type(x);				\
++	__WRITE_ONCE(x, val);						\
++} while (0)
++
++static __always_inline
++unsigned long __read_once_word_nocheck(const void *addr)
++{
++	return __READ_ONCE(*(unsigned long *)addr);
++}
++
++/*
++ * Use READ_ONCE_NOCHECK() instead of READ_ONCE() if you need to load a
++ * word from memory atomically but without telling KASAN/KCSAN. This is
++ * usually used by unwinding code when walking the stack of a running process.
++ */
++#define READ_ONCE_NOCHECK(x)						\
++({									\
++	compiletime_assert(sizeof(x) == sizeof(unsigned long),		\
++		"Unsupported access size for READ_ONCE_NOCHECK().");	\
++	(typeof(x))__read_once_word_nocheck(&(x));			\
++})
++
++static __always_inline
++unsigned long read_word_at_a_time(const void *addr)
++{
++	kasan_check_read(addr, 1);
++	return *(unsigned long *)addr;
++}
++
++#endif /* __ASSEMBLY__ */
++#endif	/* __ASM_GENERIC_RWONCE_H */
+diff --git a/include/linux/i2c.h b/include/linux/i2c.h
+index 388ce71a29a9..4bcd4516ef1c 100644
+--- a/include/linux/i2c.h
++++ b/include/linux/i2c.h
+@@ -302,6 +302,7 @@ struct i2c_driver {
+ 	struct list_head clients;
+ 
+ 	u32 flags;
++	bool disable_i2c_core_irq_mapping;
+ };
+ #define to_i2c_driver(d) container_of_const(d, struct i2c_driver, driver)
+ 
+@@ -382,6 +383,7 @@ enum i2c_slave_event {
+ 	I2C_SLAVE_WRITE_REQUESTED,
+ 	I2C_SLAVE_READ_PROCESSED,
+ 	I2C_SLAVE_WRITE_RECEIVED,
++	I2C_SLAVE_GCALL_REQUESTED,
+ 	I2C_SLAVE_STOP,
+ };
+ 
+@@ -764,6 +766,13 @@ struct i2c_adapter {
+ 
+ 	/* 7bit address space */
+ 	DECLARE_BITMAP(addrs_in_instantiation, 1 << 7);
++
++	/*
++	 * These will be used by root adpaters only. For muxes, each mux core
++	 * has these individually.
++	 */
++	struct mutex hold_lock; /* mutex for bus holding */
++	struct timer_list hold_timer;
+ };
+ #define to_i2c_adapter(d) container_of(d, struct i2c_adapter, dev)
+ 
+@@ -1116,4 +1125,22 @@ static inline struct i2c_client *i2c_acpi_new_device(struct device *dev,
+ 	return i2c_acpi_new_device_by_fwnode(dev_fwnode(dev), index, info);
+ }
+ 
++enum i2c_hold_msg_type {
++	I2C_HOLD_MSG_NONE,
++	I2C_HOLD_MSG_SET,
++	I2C_HOLD_MSG_RESET
++};
++
++static inline enum i2c_hold_msg_type i2c_check_hold_msg(u16 flags, u16 len, u16 *buf)
++{
++	if (flags & I2C_M_HOLD && len == sizeof(u16)) {
++		if (*buf)
++			return I2C_HOLD_MSG_SET;
++
++		return I2C_HOLD_MSG_RESET;
++	}
++
++	return I2C_HOLD_MSG_NONE;
++}
++
+ #endif /* _LINUX_I2C_H */
+diff --git a/include/uapi/linux/i2c.h b/include/uapi/linux/i2c.h
+index 92326ebde350..83e0f406fedc 100644
+--- a/include/uapi/linux/i2c.h
++++ b/include/uapi/linux/i2c.h
+@@ -75,6 +75,7 @@ struct i2c_msg {
+ 	__u16 flags;
+ #define I2C_M_RD		0x0001	/* guaranteed to be 0x0001! */
+ #define I2C_M_TEN		0x0010	/* use only if I2C_FUNC_10BIT_ADDR */
++#define I2C_M_HOLD		0x0100	/* for holding a mux path */
+ #define I2C_M_DMA_SAFE		0x0200	/* use only in kernel space */
+ #define I2C_M_RECV_LEN		0x0400	/* use only if I2C_FUNC_SMBUS_READ_BLOCK_DATA */
+ #define I2C_M_NO_RD_ACK		0x0800	/* use only if I2C_FUNC_PROTOCOL_MANGLING */
+-- 
+2.34.1
+

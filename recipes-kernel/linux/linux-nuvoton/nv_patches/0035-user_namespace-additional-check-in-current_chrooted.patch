@@ -1,0 +1,48 @@
+From 04b47a84a95667beb56bbc0f0f2dcb2b97f1ebbc Mon Sep 17 00:00:00 2001
+From: Nitin Singh <nitsingh@nvidia.com>
+Date: Thu, 6 Nov 2025 07:57:15 -0800
+Subject: [PATCH] user_namespace: additional check in current_chrooted
+
+On systems with overlayfs as root, current_chrooted() may
+incorrectly return true due to how overlayfs dentries are compared.
+We add an additional check:
+if the process is root and shares the same root as init,
+allow user namespace creation even if current_chrooted() is true.
+
+Signed-off-by: Nitin Singh <nitsingh@nvidia.com>
+Signed-off-by: Leo Huang <leohu@nvidia.com>
+Fixes nvbug https://nvbugspro.nvidia.com/bug/5609617
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ kernel/user_namespace.c | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/user_namespace.c b/kernel/user_namespace.c
+index aa0b2e47f2f2..686516140b1e 100644
+--- a/kernel/user_namespace.c
++++ b/kernel/user_namespace.c
+@@ -102,8 +102,19 @@ int create_user_ns(struct cred *new)
+ 	 * mount namespace which allows all files to be accessed.
+ 	 */
+ 	ret = -EPERM;
+-	if (current_chrooted())
+-		goto fail_dec;
++	if (current_chrooted()) {
++		struct path init_root;
++		bool is_real_chroot;
++
++		/* Compare our root with init's root to detect real chroot */
++		get_fs_root(init_task.fs, &init_root);
++		is_real_chroot = !path_equal(&current->fs->root, &init_root);
++		path_put(&init_root);
++
++		/* Only block if this is a real chroot, not overlayfs false-positive */
++		if (is_real_chroot)
++			goto fail_dec;
++	}
+ 
+ 	/* The creator needs a mapping in the parent user namespace
+ 	 * or else we won't be able to reasonably tell userspace who
+-- 
+2.43.0
+

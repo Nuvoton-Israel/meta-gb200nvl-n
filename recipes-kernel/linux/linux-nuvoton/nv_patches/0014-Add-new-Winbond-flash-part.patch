@@ -1,0 +1,33 @@
+From 1d713c4d3553f78f9fe1a4b532cad93365fce8e2 Mon Sep 17 00:00:00 2001
+From: Ben Peled <bpeled@nvidia.com>
+Date: Tue, 23 Apr 2024 08:28:32 -0700
+Subject: [PATCH] Add new Winbond flash part
+
+removing external patch and adding it to linux
+Fixes jira https://redmine.mellanox.com/issues/3879001
+
+Signed-off-by: Ben Peled <bpeled@nvidia.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/mtd/spi-nor/winbond.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/mtd/spi-nor/winbond.c b/drivers/mtd/spi-nor/winbond.c
+index c1683a5c2bbb..0cca908451e8 100644
+--- a/drivers/mtd/spi-nor/winbond.c
++++ b/drivers/mtd/spi-nor/winbond.c
+@@ -190,6 +190,11 @@ static const struct flash_info winbond_nor_parts[] = {
+ 		.size = SZ_16M,
+ 		.flags = SPI_NOR_HAS_LOCK | SPI_NOR_HAS_TB,
+ 		.no_sfdp_flags = SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ,
++	}, {
++		.id = SNOR_ID(0xef, 0x70, 0x20),
++		.name = "w25q256jvi",
++		.size = SZ_32M,
++		.no_sfdp_flags = SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ,
+ 	}, {
+ 		.id = SNOR_ID(0xef, 0x60, 0x19),
+ 		.name = "w25q256jw",
+-- 
+2.43.0
+

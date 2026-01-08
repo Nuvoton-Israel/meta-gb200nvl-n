@@ -1,0 +1,91 @@
+LINUX_VERSION = "6.12.40"
+SRCREV = "9caebe9d1a471802ea6500577b12dbfe1177c38d"
+KSRC = "git://github.com/Nuvoton-Israel/linux;protocol=https;branch=NPCM-6.12-OpenBMC"
+
+# From 5.10+ the COPYING file changed
+LIC_FILES_CHKSUM = "file://COPYING;md5=6bc538ed5bd9a7fc9398086aedcd7e46"
+FILESEXTRAPATHS:prepend := "${THISDIR}/linux-nuvoton:"
+FILESEXTRAPATHS:prepend := "${THISDIR}/linux-nuvoton/nv_patches:"
+
+# NPCM8XX common dts
+SRC_URI:append = " file://0009-arm64-dts-nuvoton-Add-siox-gpio-node.patch"
+
+# NPCM8XX NCSI/GMAC driver
+SRC_URI:append = " file://0001-net-phy-realtek-add-soft_reset-operation-for-rtl8211.patch"
+SRC_URI:append = " file://0001-Revert-net-ethernet-stmmac-add-sgmii-100-and-10-supp.patch"
+SRC_URI:append = " file://0001-net-stmmac-support-sgmii-auto-negotiation-for-npcm.patch"
+
+# NPCM8XX FIU driver
+SRC_URI:append = " file://0004-fiu_support_generic_spi_transfer.patch"
+
+# NPCM8XX i2c driver
+SRC_URI:append = " file://0012-i2c-npcm-multi-master.patch"
+
+# NPCM8XX reset driver
+SRC_URI:append = " file://0003-disable_usb_hub_remote_wakeup.patch"
+
+# Copy from aspeed bbappend
+SRC_URI:append = " file://enable-cifs-protocol.cfg"
+SRC_URI:append = " file://nxp-rtc-PCFPCF85053A.patch"
+SRC_URI:append = " file://0001-Update-shunt-resistor-micro-ohms-for-LTC4286-driver.patch"
+
+# Patches from NVIDIA/linux develop-6.12 (till Dec 18, 2025).
+# Note that patches 0048 ~ 0052 are relevant to i2c-core and i2c-mux, we haven't
+# verified whether they might cause any side effects.
+SRC_URI:append = "\
+    file://0001-Added-mctp-library-for-nvme-thermal-sensor.patch \
+    file://0002-Set-config-for-dgx-fan.patch \
+    file://0003-Enabling-mx66u2g45g-flash-part.patch \
+    file://0004-Fixed-PSU-fan_target-to-control-PSU-fan-speed.patch \
+    file://0005-driver-i2c-mux-pca954x-enable-support-for-numbered-a.patch \
+    file://0006-net-phy-supoort-for-RTL8211F-RGMII-SGMII-bridge.patch \
+    file://0007-drivers-i2c-fix-arbitrator.patch \
+    file://0008-drivers-i2c-add-timeout-to-arbitrator.patch \
+    file://0009-Simple-fix-driver-i2c-slave-mqueue.patch \
+    file://0010-drivers-spi-move-the-gpio-control-to-the-spi-nor-chi.patch \
+    file://0011-drivers-spinor-add-new-spinor-chip.patch \
+    file://0012-add-w25q512jvbim-in-the-kernel.patch \
+    file://0013-Fix-BMC-can-t-get-IP-if-not-connected-with-1G-switch.patch \
+    file://0014-Add-new-Winbond-flash-part.patch \
+    file://0015-add-atmel-at25xe011-chip-support.patch \
+    file://0016-Revert-Fix-BMC-can-t-get-IP-if-not-connected-with-1G.patch \
+    file://0017-Add-phy-hacks.patch \
+    file://0018-iio-adc-ti-ads7142-Add-new-driver-support-for-ADS714.patch \
+    file://0019-iio-adc-max1363-Add-ability-to-set-scale-of-the-ADC.patch \
+    file://0020-disable-dual-read-on-at25xe011.patch \
+    file://0021-usb-gadget-Add-MCTP-USB-function.patch \
+    file://0022-usb-gadget-mctp-defer-tx-to-batch.patch \
+    file://0023-Meta-DGX-Add-configuration-flag-for-Luna-specific-fa.patch \
+    file://0024-drivers-fix-compile-issue-on-.probe-and-.remove.patch \
+    file://0025-iio-adc-ti-ads7142-Fixed-device-id-in-probe-function.patch \
+    file://0026-net-mctp-Expose-transport-binding-identifier-via-IFL.patch \
+    file://0027-mctp-i2c-drop-check-because-i2c_unregister_device-is.patch \
+    file://0028-HID-cp2112-Fwnode-Support.patch \
+    file://0029-HID-cp2112-Configure-I2C-Bus-Speed-from-Firmware.patch \
+    file://0030-net-mctp-start-tx-queue-on-netdev-open.patch \
+    file://0031-Revert-mctp-i2c-drop-check-because-i2c_unregister_de.patch \
+    file://0032-Revert-net-mctp-i2c-Copy-headers-if-cloned.patch \
+    file://0033-Revert-mctp-Fix-incorrect-tx-flow-invalidation-condi.patch \
+    file://0034-Fix-MCTP-control-message-packets-routing-for-NULL-ei.patch \
+    file://0035-user_namespace-additional-check-in-current_chrooted.patch \
+    file://0036-Changes-to-enable-retries-in-mctp-i2c-path.patch \
+    file://0037-Decrease-USB-CTRL-Timeout-to-Avoid-Kernel-Panic.patch \
+    file://0038-net-mctp-Fix-duplicate-route-check.patch \
+    file://0039-Changes-to-remove-the-dmesg-logs-for-__i2ctransferfa.patch \
+    file://0040-Revert-Revert-net-mctp-i2c-Copy-headers-if-cloned.patch \
+    file://0041-Revert-Revert-mctp-i2c-drop-check-because-i2c_unregi.patch \
+    file://0042-Sync-ssif_bmc-changes-from-NV-linux.patch \
+    file://0043-Sync-MCTP-USB-changes-from-NV-linux.patch \
+    file://0044-Implementation-for-MCTP-ERROR-queue-support-implemen.patch \
+    file://0045-usb-gadget-Add-MCTP-USB-function.patch \
+    file://0046-drivers-usb-gadget-mctp-fix-kernel-panic-and-update-.patch \
+    file://0047-Fix-all-info-logs-to-debug-logs-in-MCTP-Error-report.patch \
+    file://0048-i2c-Add-mux-hold-unhold-msg-types.patch \
+    file://0049-i2c-mux-Add-mux-deselect-support-on-timeout.patch \
+    file://0050-init-hold-lock-before-registering-devices.patch \
+    file://0051-Use-mutex_trylock-for-i2c-adapter-or-MUX-lock.patch \
+    file://0052-fixed-misused-lock-in-MCTP-over-i2c.patch \
+    file://0053-net-fix-compile-issue-after-sync-to-dev-6.12.patch \
+"
+# Add NPCM8xx support for SSIF_bmc driver
+SRC_URI:append = " file://1340-ipmi-ssif_bmc-add-npcm-slave-disable-enable-method.patch"

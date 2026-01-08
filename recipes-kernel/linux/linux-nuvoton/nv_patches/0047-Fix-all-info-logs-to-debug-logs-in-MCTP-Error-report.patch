@@ -1,0 +1,283 @@
+From c9c1ef4e57865b46352579bd4cb244a34a326b4a Mon Sep 17 00:00:00 2001
+From: Rohit PAI <ropai@nvidia.com>
+Date: Tue, 9 Dec 2025 23:04:32 +0530
+Subject: [PATCH] Fix all info logs to debug logs in MCTP Error reporting
+
+Debug logs can be enabled by dynamic debug control
+
+Fixes JIRA https://mctp-error-handling
+Signed-off-by: Rohit PAI <ropai@nvidia.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/net/mctp/mctp-i2c-error-inject.c | 14 +++++++-------
+ drivers/net/mctp/mctp-usb-error-inject.c | 20 ++++++++++----------
+ net/mctp/af_mctp.c                       |  4 ++--
+ net/mctp/mctp-socket-error-inject.c      |  6 +++---
+ net/mctp/route.c                         | 10 +++++-----
+ 5 files changed, 27 insertions(+), 27 deletions(-)
+
+diff --git a/drivers/net/mctp/mctp-i2c-error-inject.c b/drivers/net/mctp/mctp-i2c-error-inject.c
+index 41bb0e117075..86eb1ae97810 100644
+--- a/drivers/net/mctp/mctp-i2c-error-inject.c
++++ b/drivers/net/mctp/mctp-i2c-error-inject.c
+@@ -165,7 +165,7 @@ int mctp_i2c_error_inject_tx(struct mctp_i2c_dev *midev, struct sk_buff *skb)
+ 	
+ 	mh = mctp_hdr(skb);
+ 	
+-	netdev_info(midev->ndev,
++	netdev_dbg(midev->ndev,
+ 		    "ERROR INJECTION: TX - error=%d, src_eid=%u, dest_eid=%u, "
+ 		    "total_injected=%u, mode=%s\n",
+ 		    ei->i2c_tx_error_code, mh->src, mh->dest,
+@@ -223,7 +223,7 @@ int mctp_i2c_error_inject_fragment(struct mctp_i2c_dev *midev, struct sk_buff *s
+ 		ei->total_errors_injected++;
+ 		spin_unlock_bh(&ei->lock);
+ 		
+-		netdev_info(midev->ndev,
++		netdev_dbg(midev->ndev,
+ 			    "ERROR INJECTION: SOM bit CLEARED (first fragment, src=%u, dest=%u, seq=%u)\n",
+ 			    mh->src, mh->dest, seq);
+ 		
+@@ -243,7 +243,7 @@ int mctp_i2c_error_inject_fragment(struct mctp_i2c_dev *midev, struct sk_buff *s
+ 		ei->total_errors_injected++;
+ 		spin_unlock_bh(&ei->lock);
+ 		
+-		netdev_info(midev->ndev,
++		netdev_dbg(midev->ndev,
+ 			    "ERROR INJECTION: Sequence CORRUPTED (2nd+ fragment, src=%u, dest=%u, %u -> %u)\n",
+ 			    mh->src, mh->dest, old_seq, corrupted_seq);
+ 		
+@@ -257,7 +257,7 @@ int mctp_i2c_error_inject_fragment(struct mctp_i2c_dev *midev, struct sk_buff *s
+ 		ei->total_errors_injected++;
+ 		spin_unlock_bh(&ei->lock);
+ 		
+-		netdev_info(midev->ndev,
++		netdev_dbg(midev->ndev,
+ 			    "ERROR INJECTION: Fragment DROPPED (2nd+ fragment, src=%u, dest=%u, seq=%u)\n",
+ 			    mh->src, mh->dest, seq);
+ 		
+@@ -310,7 +310,7 @@ static ssize_t mctp_debugfs_enable_tx_write(struct file *file, const char __user
+ 	midev->error_inject.enable_tx = enable;
+ 	spin_unlock_bh(&midev->error_inject.lock);
+ 	
+-	netdev_info(midev->ndev, "TX error injection %s\n",
++	netdev_dbg(midev->ndev, "TX error injection %s\n",
+ 		    enable ? "enabled" : "disabled");
+ 	
+ 	return count;
+@@ -359,7 +359,7 @@ static ssize_t mctp_debugfs_enable_rx_write(struct file *file, const char __user
+ 	midev->error_inject.enable_rx = enable;
+ 	spin_unlock_bh(&midev->error_inject.lock);
+ 	
+-	netdev_info(midev->ndev, "RX error injection %s\n",
++	netdev_dbg(midev->ndev, "RX error injection %s\n",
+ 		    enable ? "enabled" : "disabled");
+ 	
+ 	return count;
+@@ -787,7 +787,7 @@ static ssize_t mctp_debugfs_reset_write(struct file *file, const char __user *us
+ 	
+ 	spin_unlock_bh(&ei->lock);
+ 	
+-	netdev_info(midev->ndev, "Error injection reset\n");
++	netdev_dbg(midev->ndev, "Error injection reset\n");
+ 	
+ 	return count;
+ }
+diff --git a/drivers/net/mctp/mctp-usb-error-inject.c b/drivers/net/mctp/mctp-usb-error-inject.c
+index a4e4f759d31a..d3a8e35e788f 100644
+--- a/drivers/net/mctp/mctp-usb-error-inject.c
++++ b/drivers/net/mctp/mctp-usb-error-inject.c
+@@ -170,7 +170,7 @@ int mctp_usb_error_inject_tx_sync(struct mctp_usb *mctp_usb, struct sk_buff *skb
+ 	 */
+ 	mh = (struct mctp_hdr *)(skb->data + sizeof(struct mctp_usb_hdr));
+ 	
+-	netdev_info(mctp_usb->netdev,
++	netdev_dbg(mctp_usb->netdev,
+ 	           "Error injection: TX URB submission failed (sync) - error=%d, src_eid=%u, dest_eid=%u, "
+ 	           "total_injected=%u, mode=%s\n",
+ 	           ei->urb_tx_sync_error_code, mh->src, mh->dest,
+@@ -223,7 +223,7 @@ int mctp_usb_error_inject_tx_async(struct mctp_usb *mctp_usb,
+ 	ei->total_errors_injected++;
+ 	spin_unlock_bh(&ei->lock);
+ 	
+-	netdev_info(mctp_usb->netdev,
++	netdev_dbg(mctp_usb->netdev,
+ 	           "Error injection: TX URB completion failed (async) - error=%d, total_injected=%u, mode=%s (URB-level, may affect multiple packets)\n",
+ 	           ei->urb_tx_async_error_code,
+ 	           ei->urb_tx_async_errors_injected,
+@@ -269,14 +269,14 @@ int mctp_usb_error_inject_rx(struct mctp_usb *mctp_usb, int original_status)
+ 	ei->total_errors_injected++;
+ 	spin_unlock_bh(&ei->lock);
+ 	
+-	netdev_info(mctp_usb->netdev,
++	netdev_dbg(mctp_usb->netdev,
+ 	           "Error injection: RX URB completion failed - error=%d, total_injected=%u, mode=%s\n",
+ 	           ei->urb_rx_error_code,
+ 	           ei->urb_rx_errors_injected,
+ 	           ei->mode == MCTP_ERR_MODE_ALWAYS ? "always" :
+ 	           ei->mode == MCTP_ERR_MODE_RANDOM ? "random" : "count");
+ 	
+-	netdev_info(mctp_usb->netdev,
++	netdev_dbg(mctp_usb->netdev,
+ 	           "Error injection: RX packet will be DROPPED due to injected error\n");
+ 	
+ 	return ei->urb_rx_error_code;
+@@ -366,7 +366,7 @@ int mctp_usb_error_inject_fragment(struct mctp_usb *mctp_usb, struct sk_buff *sk
+ 		ei->total_errors_injected++;
+ 		spin_unlock_bh(&ei->lock);
+ 		
+-		netdev_info(mctp_usb->netdev,
++		netdev_dbg(mctp_usb->netdev,
+ 		           "Error injection: SOM bit CLEARED (first fragment, src=%u, dest=%u, seq=%u)%s\n",
+ 		           mh->src, mh->dest, seq,
+ 		           ei->eid_filter.enabled ? " [EID filter ACTIVE]" : "");
+@@ -388,7 +388,7 @@ int mctp_usb_error_inject_fragment(struct mctp_usb *mctp_usb, struct sk_buff *sk
+ 		ei->total_errors_injected++;
+ 		spin_unlock_bh(&ei->lock);
+ 		
+-		netdev_info(mctp_usb->netdev,
++		netdev_dbg(mctp_usb->netdev,
+ 		           "Error injection: Sequence CORRUPTED (2nd+ fragment, src=%u, dest=%u, orig_seq=%u -> corrupted_seq=%u)%s\n",
+ 		           mh->src, mh->dest, seq, corrupted_seq,
+ 		           ei->eid_filter.enabled ? " [EID filter ACTIVE]" : "");
+@@ -404,7 +404,7 @@ int mctp_usb_error_inject_fragment(struct mctp_usb *mctp_usb, struct sk_buff *sk
+ 		ei->total_errors_injected++;
+ 		spin_unlock_bh(&ei->lock);
+ 		
+-		netdev_info(mctp_usb->netdev,
++		netdev_dbg(mctp_usb->netdev,
+ 		           "Error injection: Fragment DROPPED (2nd+ fragment, src=%u, dest=%u, seq=%u)%s\n",
+ 		           mh->src, mh->dest, seq,
+ 		           ei->eid_filter.enabled ? " [EID filter ACTIVE]" : "");
+@@ -460,7 +460,7 @@ static ssize_t mctp_debugfs_enable_tx_write(struct file *file, const char __user
+ 	mctp_usb->error_inject.enable_tx = enable;
+ 	spin_unlock_bh(&mctp_usb->error_inject.lock);
+ 	
+-	netdev_info(mctp_usb->netdev, "TX error injection %s\n",
++	netdev_dbg(mctp_usb->netdev, "TX error injection %s\n",
+ 	           enable ? "enabled" : "disabled");
+ 	
+ 	return count;
+@@ -509,7 +509,7 @@ static ssize_t mctp_debugfs_enable_rx_write(struct file *file, const char __user
+ 	mctp_usb->error_inject.enable_rx = enable;
+ 	spin_unlock_bh(&mctp_usb->error_inject.lock);
+ 	
+-	netdev_info(mctp_usb->netdev, "RX error injection %s\n",
++	netdev_dbg(mctp_usb->netdev, "RX error injection %s\n",
+ 	           enable ? "enabled" : "disabled");
+ 	
+ 	return count;
+@@ -951,7 +951,7 @@ static ssize_t mctp_debugfs_reset_write(struct file *file, const char __user *us
+ 	
+ 	spin_unlock_bh(&ei->lock);
+ 	
+-	netdev_info(mctp_usb->netdev, "Error injection reset\n");
++	netdev_dbg(mctp_usb->netdev, "Error injection reset\n");
+ 	
+ 	return count;
+ }
+diff --git a/net/mctp/af_mctp.c b/net/mctp/af_mctp.c
+index 9c28d75fb906..3e57422949d3 100644
+--- a/net/mctp/af_mctp.c
++++ b/net/mctp/af_mctp.c
+@@ -467,7 +467,7 @@ __must_hold(&net->mctp.keys_lock)
+ 				list_add_tail(&perr->list, &msk->pending_errors);
+ 				spin_unlock_bh(&msk->error_queue_lock);
+ 					
+-					pr_info("MCTP: RX timeout queued for deferred error reporting (key has TX origin, orig_payload_len=%u)\n",
++					pr_debug("MCTP: RX timeout queued for deferred error reporting (key has TX origin, orig_payload_len=%u)\n",
+ 						key->orig_payload_len);
+ 					
+ 					/* Schedule work - returns immediately */
+@@ -478,7 +478,7 @@ __must_hold(&net->mctp.keys_lock)
+ 			}
+ 		} else if (msk->enable_errqueue && key->orig_payload_len == 0) {
+ 			/* RX-only key (unsolicited request from device) - don't report */
+-			pr_info("MCTP: RX timeout NOT reported - no TX origin (unsolicited request, orig_payload_len=0)\n");
++			pr_debug("MCTP: RX timeout NOT reported - no TX origin (unsolicited request, orig_payload_len=0)\n");
+ 		}
+ 	}
+ 
+diff --git a/net/mctp/mctp-socket-error-inject.c b/net/mctp/mctp-socket-error-inject.c
+index 76c42216ae2f..b8d03f2d028f 100644
+--- a/net/mctp/mctp-socket-error-inject.c
++++ b/net/mctp/mctp-socket-error-inject.c
+@@ -33,7 +33,7 @@ int mctp_socket_error_inject_sendmsg(void)
+ 		mctp_socket_ei.errors_injected++;
+ 		ret = mctp_socket_ei.error_code;
+ 		
+-		pr_info("MCTP Socket Error Injection: sendmsg() returning %d, "
++		pr_debug("MCTP Socket Error Injection: sendmsg() returning %d, "
+ 		        "total_injected=%llu\n",
+ 		        ret, mctp_socket_ei.errors_injected);
+ 	}
+@@ -71,7 +71,7 @@ static ssize_t enable_write(struct file *file, const char __user *userbuf,
+ 	
+ 	mctp_socket_ei.enabled = (value != 0);
+ 	
+-	pr_info("MCTP Socket Error Injection: %s\n", 
++	pr_debug("MCTP Socket Error Injection: %s\n", 
+ 	        mctp_socket_ei.enabled ? "ENABLED" : "DISABLED");
+ 	return count;
+ }
+@@ -174,7 +174,7 @@ static ssize_t reset_write(struct file *file, const char __user *userbuf,
+ 	mctp_socket_ei.errors_injected = 0;
+ 	spin_unlock_bh(&mctp_socket_ei.lock);
+ 	
+-	pr_info("MCTP Socket Error Injection: Reset (disabled and cleared)\n");
++	pr_debug("MCTP Socket Error Injection: Reset (disabled and cleared)\n");
+ 	return count;
+ }
+ 
+diff --git a/net/mctp/route.c b/net/mctp/route.c
+index f7d54df104d9..a011dceccc90 100644
+--- a/net/mctp/route.c
++++ b/net/mctp/route.c
+@@ -2000,7 +2000,7 @@ struct sock *mctp_lookup_sock_by_key(struct sk_buff *skb, struct net_device *dev
+ 		*found_key = NULL;
+ 
+ 	if (!skb || skb->len < sizeof(struct mctp_hdr)) {
+-		pr_info("MCTP: lookup_sock_by_key: invalid skb (skb=%p len=%u)\n",
++		pr_err("MCTP: lookup_sock_by_key: invalid skb (skb=%p len=%u)\n",
+ 			skb, skb ? skb->len : 0);
+ 		return NULL;
+ 	}
+@@ -2016,7 +2016,7 @@ struct sock *mctp_lookup_sock_by_key(struct sk_buff *skb, struct net_device *dev
+ 	mdev = __mctp_dev_get(dev);
+ 	if (!mdev) {
+ 		rcu_read_unlock();
+-		pr_info("MCTP: lookup_sock_by_key: no mctp_dev for %s\n", dev->name);
++		pr_err("MCTP: lookup_sock_by_key: no mctp_dev for %s\n", dev->name);
+ 		return NULL;
+ 	}
+ 	netid = READ_ONCE(mdev->net);
+@@ -2026,7 +2026,7 @@ struct sock *mctp_lookup_sock_by_key(struct sk_buff *skb, struct net_device *dev
+ 	/* Extract tag from MCTP header (bits 2-0) */
+ 	tag = mh->flags_seq_tag & MCTP_HDR_TAG_MASK;
+ 
+-	pr_info("MCTP: lookup_sock_by_key: netid=%u src=%u dest=%u tag=%u\n",
++	pr_debug("MCTP: lookup_sock_by_key: netid=%u src=%u dest=%u tag=%u\n",
+ 		netid, mh->src, mh->dest, tag);
+ 
+ 	/* Look up key in global key table */
+@@ -2058,7 +2058,7 @@ struct sock *mctp_lookup_sock_by_key(struct sk_buff *skb, struct net_device *dev
+ 		/* Return the matched key via output parameter */
+ 		if (found_key)
+ 			*found_key = key;
+-		pr_info("MCTP: lookup_sock_by_key: FOUND socket %p (key: net=%u local=%u peer=%u tag=%u)\n",
++		pr_debug("MCTP: lookup_sock_by_key: FOUND socket %p (key: net=%u local=%u peer=%u tag=%u)\n",
+ 			sk, key->net, key->local_addr, key->peer_addr, key->tag);
+ 	}
+ 	break;
+@@ -2067,7 +2067,7 @@ struct sock *mctp_lookup_sock_by_key(struct sk_buff *skb, struct net_device *dev
+ spin_unlock_irqrestore(&net->mctp.keys_lock, flags);
+ 
+ if (!sk) {
+-	pr_info("MCTP: lookup_sock_by_key: NO MATCH found for netid=%u src=%u dest=%u tag=%u\n",
++	pr_debug("MCTP: lookup_sock_by_key: NO MATCH found for netid=%u src=%u dest=%u tag=%u\n",
+ 		netid, mh->src, mh->dest, tag);
+ }
+ 
+-- 
+2.43.0
+

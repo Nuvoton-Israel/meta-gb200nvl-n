@@ -1,0 +1,83 @@
+From f562408b7fedac88cf7bfe9ba9369e5e73ffd6a9 Mon Sep 17 00:00:00 2001
+From: Marvin Lin <milkfafa@gmail.com>
+Date: Fri, 19 Dec 2025 17:20:27 +0800
+Subject: [PATCH] drivers: fix compile issue on .probe and .remove
+
+Several drivers' .probe and .remove callback did not keep updated
+with latest upstream template. Fix to align with upstream.
+
+Signed-off-by: Leo Huang <leohu@nvidia.com>
+Fixes JIRA https://jirasw.nvidia.com/browse/DGXOPENBMC-16046
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/i2c/i2c-slave-mqueue.c | 7 ++-----
+ drivers/iio/adc/ti-ads7142.c   | 8 ++++----
+ 2 files changed, 6 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/i2c/i2c-slave-mqueue.c b/drivers/i2c/i2c-slave-mqueue.c
+index c020433f82a9..11deee99df3b 100644
+--- a/drivers/i2c/i2c-slave-mqueue.c
++++ b/drivers/i2c/i2c-slave-mqueue.c
+@@ -136,8 +136,7 @@ static ssize_t i2c_slave_mqueue_bin_read(struct file *filp,
+ 	return ret;
+ }
+ 
+-static int i2c_slave_mqueue_probe(struct i2c_client *client,
+-				  const struct i2c_device_id *id)
++static int i2c_slave_mqueue_probe(struct i2c_client *client)
+ {
+ 	struct device *dev = &client->dev;
+ 	struct mq_queue *mq;
+@@ -196,7 +195,7 @@ static int i2c_slave_mqueue_probe(struct i2c_client *client,
+ 	return 0;
+ }
+ 
+-static int i2c_slave_mqueue_remove(struct i2c_client *client)
++static void i2c_slave_mqueue_remove(struct i2c_client *client)
+ {
+ 	struct mq_queue *mq = i2c_get_clientdata(client);
+ 
+@@ -204,8 +203,6 @@ static int i2c_slave_mqueue_remove(struct i2c_client *client)
+ 
+ 	kernfs_put(mq->kn);
+ 	sysfs_remove_bin_file(&client->dev.kobj, &mq->bin);
+-
+-	return 0;
+ }
+ 
+ static const struct i2c_device_id i2c_slave_mqueue_id[] = {
+diff --git a/drivers/iio/adc/ti-ads7142.c b/drivers/iio/adc/ti-ads7142.c
+index 7903b2c81277..9ab8992e80b7 100644
+--- a/drivers/iio/adc/ti-ads7142.c
++++ b/drivers/iio/adc/ti-ads7142.c
+@@ -225,11 +225,11 @@ static int ads7142_read_raw(struct iio_dev *indio_dev,
+ 	return ret;
+ }
+ 
+-static int ads7142_probe(struct i2c_client *client,
+-			 const struct i2c_device_id *id)
++static int ads7142_probe(struct i2c_client *client)
+ {
+ 	struct iio_dev *indio_dev;
+ 	struct ads7142_state *state;
++	struct device *dev = &client->dev;
+ 	int ret;
+ 
+ 	indio_dev = devm_iio_device_alloc(&client->dev, sizeof(*state));
+@@ -243,11 +243,11 @@ static int ads7142_probe(struct i2c_client *client,
+ 
+ 	state->chip = device_get_match_data(&client->dev);
+ 	if (!state->chip)
+-		state->chip = (const struct ads7142_chip_data *)id->driver_data;
++		state->chip = (const struct ads7142_chip_data *)dev->driver_data;
+ 	if (!state->chip)
+ 		return dev_err_probe(&client->dev, -EINVAL, "Unknown chip.\n");
+ 
+-	indio_dev->name = id->name;
++	indio_dev->name = "ads7142";
+ 	indio_dev->channels = state->chip->channels;
+ 	indio_dev->num_channels = state->chip->num_channels;
+ 	indio_dev->info = state->chip->info;
+-- 
+2.34.1
+

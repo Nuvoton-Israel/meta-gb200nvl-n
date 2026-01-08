@@ -1,0 +1,99 @@
+From 033c68afb5ea78d0b99fae0bb37606e6e9de8722 Mon Sep 17 00:00:00 2001
+From: Curtis Chuang <shengchihc@nvidia.com>
+Date: Mon, 11 Mar 2024 21:51:37 -0700
+Subject: [PATCH] Fix BMC can't get IP if not connected with 1G switch.
+
+For 80211FS, Add reading SGMII ANLPAR(0xdc0/0x1f) to configure Link of
+SGMII ANAR(0xd08/0x10) and net stack instead of hard-coding to 1G.
+
+Fixes nvbug https://nvbugspro.nvidia.com/bug/4554120
+
+Signed-off-by: Curtis Chuang <shengchihc@nvidia.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/net/phy/realtek.c | 56 ++++++++++++++++++++++++---------------
+ 1 file changed, 34 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/net/phy/realtek.c b/drivers/net/phy/realtek.c
+index 04216e329b60..7bdba347704f 100644
+--- a/drivers/net/phy/realtek.c
++++ b/drivers/net/phy/realtek.c
+@@ -436,22 +436,6 @@ static int rtl8211f_config_init(struct phy_device *phydev)
+ 			dev_err(dev, "Failed to reset PHY \n");
+ 			return ret;
+ 		}
+-
+-		/* SGMII ANAR (SGMII Auto-Negotiation Advertising Register) */
+-		/*Link status : set to 1 , Duplex Mode : Full Duplex*/
+-		ret = phy_modify_paged_changed(phydev, 0xd08, 0x10, BIT(3) | BIT(2), BIT(3) | BIT(2));
+-		if(ret < 0) {
+-			dev_err(dev, "Failed to update the Link & Duplex \n");
+-			return ret;
+-		}
+-
+-		/* Speed : 1000Mbps */
+-		ret = phy_modify_paged_changed(phydev, 0xd08, 0x10, BIT(1) | BIT(0), 0x2);
+-		if(ret < 0){
+-			dev_err(dev, "Failed to update the Speed \n");
+-			return ret;
+-		}
+-
+ 	}
+ 
+ 	ret = phy_modify_paged_changed(phydev, 0xd08, 0x11, RTL8211F_TX_DELAY,
+@@ -514,18 +498,46 @@ static int rtl8211f_rtlgen_read_status(struct phy_device *phydev)
+ 	ret = ret & RTL8211F_MODE_SEL;
+ 
+ 	if (ret == RTL8211F_SGMII_RGMII_PM || ret == RTL8211F_SGMII_RGMII_MP) {
+-
+ 		/* Check Link status */
+-		ret = phy_read_paged(phydev, 0xdcf, 0x15);
++		ret = phy_read_paged(phydev, 0xdc0, 0x15);
+ 		if (ret < 0) {
+-			dev_err(&phydev->mdio.dev,"failed to read  link status \n");
++			dev_err(&phydev->mdio.dev,"failed to read link status \n");
+ 			return ret;
+ 		}
+ 		/* Link is Up */
+-		if (ret &  BIT(4)) {
++		if (ret &  BIT(15)) {
+ 			phydev->link = 1;
+-			phydev->speed = 1000;
+-			phydev->duplex=DUPLEX_FULL;
++			phy_modify_paged_changed(phydev, 0xd08, 0x10, BIT(3) , BIT(3));
++		}
++		else {
++			phydev->link = 0;
++			phy_modify_paged_changed(phydev, 0xd08, 0x10, BIT(3) , 0);
++		}
++
++		/* Duplex */
++		if (ret &  BIT(12)) {
++			phydev->duplex = DUPLEX_FULL;
++			phy_modify_paged_changed(phydev, 0xd08, 0x10, BIT(2) , BIT(2));
++		}
++		else {
++			phydev->duplex = DUPLEX_HALF;
++			phy_modify_paged_changed(phydev, 0xd08, 0x10, BIT(2) , 0);
++		}
++
++		/* Speed */
++		switch (ret & 0xC00) {
++			case 0x0:
++				phydev->speed = SPEED_10;
++				phy_modify_paged_changed(phydev, 0xd08, 0x10, BIT(1)|BIT(0) , 0);
++				break;
++			case 0x400:
++				phydev->speed = SPEED_100;
++				phy_modify_paged_changed(phydev, 0xd08, 0x10, BIT(1)|BIT(0) , BIT(0));
++				break;
++			case 0x800:
++				phydev->speed = SPEED_1000;
++				phy_modify_paged_changed(phydev, 0xd08, 0x10, BIT(1)|BIT(0) , BIT(1));
++				break;
+ 		}
+ 	} else {
+ 		ret = genphy_read_status(phydev);
+-- 
+2.43.0
+

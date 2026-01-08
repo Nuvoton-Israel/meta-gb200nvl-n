@@ -1,0 +1,203 @@
+From c6d7510ac63eb094fa274adda20c6b33ea324925 Mon Sep 17 00:00:00 2001
+From: Marvin Lin <milkfafa@gmail.com>
+Date: Fri, 19 Dec 2025 11:18:12 +0800
+Subject: [PATCH] drivers: spi: move the gpio control to the spi nor chip
+ driver
+
+spi controller is high level it that gives access to several
+spi chips potentially. spi controller driver will load
+correctly even if underlying spi chip driver fails.
+due to this move the gpio mux control from the spi controller
+driver to the spi chip driver.
+
+Signed-off-by: Radivoje (Ogi) Jovanovic <rjovanovic@nvidia.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/mtd/spi-nor/core.c  | 83 ++++++++++++++-----------------------
+ include/linux/mtd/spi-nor.h |  3 +-
+ 2 files changed, 33 insertions(+), 53 deletions(-)
+
+diff --git a/drivers/mtd/spi-nor/core.c b/drivers/mtd/spi-nor/core.c
+index 5973b517404a..1e92fd599eec 100644
+--- a/drivers/mtd/spi-nor/core.c
++++ b/drivers/mtd/spi-nor/core.c
+@@ -16,7 +16,6 @@
+ #include <linux/mtd/mtd.h>
+ #include <linux/mtd/spi-nor.h>
+ #include <linux/mutex.h>
+-#include <linux/of_device.h>
+ #include <linux/of_platform.h>
+ #include <linux/sched/task_stack.h>
+ #include <linux/sizes.h>
+@@ -44,9 +43,6 @@
+ #define SPI_NOR_SRST_SLEEP_MIN 200
+ #define SPI_NOR_SRST_SLEEP_MAX 400
+ 
+-static int spi_nor_remove_notifier_call(struct notifier_block *nb,
+-					unsigned long event, void *data);
+-
+ /**
+  * spi_nor_get_cmd_ext() - Get the command opcode extension based on the
+  *			   extension type.
+@@ -1191,9 +1187,6 @@ static int spi_nor_prep(struct spi_nor *nor)
+ 	if (nor->controller_ops && nor->controller_ops->prepare)
+ 		ret = nor->controller_ops->prepare(nor);
+ 
+-	if (nor->mtd.mtd_event_remove)
+-		return -ENODEV;
+-
+ 	return ret;
+ }
+ 
+@@ -3582,6 +3575,7 @@ static int spi_nor_probe(struct spi_mem *spimem)
+ 	struct spi_device *spi = spimem->spi;
+ 	struct flash_platform_data *data = dev_get_platdata(&spi->dev);
+ 	struct spi_nor *nor;
++	struct device *dev = &spi->dev;
+ 	/*
+ 	 * Enable all caps by default. The core will mask them after
+ 	 * checking what's really supported using spi_mem_supports_op().
+@@ -3594,6 +3588,12 @@ static int spi_nor_probe(struct spi_mem *spimem)
+ 	if (!nor)
+ 		return -ENOMEM;
+ 
++	nor->mux_gpio = devm_gpiod_get(dev, "mux", GPIOD_OUT_LOW);
++	if (!IS_ERR(nor->mux_gpio)) {
++		dev_info(dev, "permanently asserting the spi chip mux\n");
++		gpiod_set_value(nor->mux_gpio, 1);
++	}
++
+ 	nor->spimem = spimem;
+ 	nor->dev = &spi->dev;
+ 	spi_nor_set_flash_node(nor, spi->dev.of_node);
+@@ -3621,7 +3621,7 @@ static int spi_nor_probe(struct spi_mem *spimem)
+ 
+ 	ret = spi_nor_scan(nor, flash_name, &hwcaps);
+ 	if (ret)
+-		return ret;
++		goto disable_gpio;
+ 
+ 	spi_nor_debugfs_register(nor);
+ 
+@@ -3636,35 +3636,45 @@ static int spi_nor_probe(struct spi_mem *spimem)
+ 		nor->bouncebuf = devm_kmalloc(nor->dev,
+ 					      nor->bouncebuf_size,
+ 					      GFP_KERNEL);
+-		if (!nor->bouncebuf)
+-			return -ENOMEM;
++		if (!nor->bouncebuf) {
++			ret = -ENOMEM;
++			goto disable_gpio;
++		}
+ 	}
+ 
+ 	ret = spi_nor_create_read_dirmap(nor);
+ 	if (ret)
+-		return ret;
++		goto disable_gpio;
+ 
+ 	ret = spi_nor_create_write_dirmap(nor);
+ 	if (ret)
+-		return ret;
+-
+-	if (!nor->spi_nor_remove_nb.notifier_call) {
+-		nor->spi_nor_remove_nb.notifier_call = spi_nor_remove_notifier_call;
+-		bus_register_notifier(&spi_bus_type, &nor->spi_nor_remove_nb);
+-	}
++		goto disable_gpio;
+ 
+-	return mtd_device_register(&nor->mtd, data ? data->parts : NULL,
++	ret  = mtd_device_register(&nor->mtd, data ? data->parts : NULL,
+ 				   data ? data->nr_parts : 0);
++	if (!ret)
++		return 0;
++
++disable_gpio:
++	if (!IS_ERR(nor->mux_gpio)) {
++		dev_info(dev, "releasing the spi chip mux\n");
++		gpiod_set_value(nor->mux_gpio, 0);
++		devm_gpiod_put(dev, nor->mux_gpio);
++	}
++	return ret;
+ }
+ 
+ static int spi_nor_remove(struct spi_mem *spimem)
+ {
+ 	struct spi_nor *nor = spi_mem_get_drvdata(spimem);
+ 
+-	spi_nor_restore(nor);
++	if (!IS_ERR(nor->mux_gpio)) {
++		dev_info(nor->dev, "releasing the spi chip mux\n");
++		gpiod_set_value(nor->mux_gpio, 0);
++		devm_gpiod_put(nor->dev, nor->mux_gpio);
++	}
+ 
+-	bus_unregister_notifier(&spi_bus_type, &nor->spi_nor_remove_nb);
+-	memset(&nor->spi_nor_remove_nb, 0, sizeof(nor->spi_nor_remove_nb));
++	spi_nor_restore(nor);
+ 
+ 	/* Clean up MTD stuff. */
+ 	return mtd_device_unregister(&nor->mtd);
+@@ -3744,37 +3754,6 @@ static const struct of_device_id spi_nor_of_table[] = {
+ };
+ MODULE_DEVICE_TABLE(of, spi_nor_of_table);
+ 
+-static int spi_nor_remove_notifier_call(struct notifier_block *nb,
+-				    unsigned long event, void *data)
+-{
+-	struct device *dev = data;
+-	struct spi_device *spi;
+-	struct spi_mem *mem;
+-	struct spi_nor *nor;
+-
+-	if (!of_match_device(spi_nor_of_table, dev))
+-		return 0;
+-
+-	switch (event) {
+-	case BUS_NOTIFY_DEL_DEVICE:
+-	case BUS_NOTIFY_UNBIND_DRIVER:
+-		spi = to_spi_device(dev);
+-		mem = spi_get_drvdata(spi);
+-		if (!mem)
+-			return NOTIFY_DONE;
+-		nor = spi_mem_get_drvdata(mem);
+-
+-		mutex_lock(&nor->lock);
+-		nor->mtd.mtd_event_remove = true;
+-		mutex_unlock(&nor->lock);
+-		msleep(300);
+-
+-		break;
+-	}
+-
+-	return NOTIFY_DONE;
+-}
+-
+ /*
+  * REVISIT: many of these chips have deep power-down modes, which
+  * should clearly be entered on suspend() to minimize power use.
+diff --git a/include/linux/mtd/spi-nor.h b/include/linux/mtd/spi-nor.h
+index d176af8fe2f2..e4e1de1e32af 100644
+--- a/include/linux/mtd/spi-nor.h
++++ b/include/linux/mtd/spi-nor.h
+@@ -9,6 +9,7 @@
+ #include <linux/bitops.h>
+ #include <linux/mtd/mtd.h>
+ #include <linux/spi/spi-mem.h>
++#include <linux/gpio/consumer.h>
+ 
+ /*
+  * Note on opcode nomenclature: some opcodes have a format like
+@@ -419,8 +420,8 @@ struct spi_nor {
+ 		struct spi_mem_dirmap_desc *wdesc;
+ 	} dirmap;
+ 
++	struct gpio_desc *mux_gpio;
+ 	void *priv;
+-	struct notifier_block spi_nor_remove_nb;
+ };
+ 
+ static inline void spi_nor_set_flash_node(struct spi_nor *nor,
+-- 
+2.34.1
+

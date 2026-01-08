@@ -1,0 +1,33 @@
+From b45b0e31d4cd25e0bf0c37e2d637ba352cd29d32 Mon Sep 17 00:00:00 2001
+From: saptarsis <saptarsis@nvidia.com>
+Date: Thu, 20 Nov 2025 14:46:09 +0530
+Subject: [PATCH] Changes to remove the dmesg logs for __i2ctransferfailed
+
+Changes remove the noisy dmesg logs
+kernel: i2c i2c-7: __i2c_transfer failed -6
+and instead rely on the tx_error stats instead
+due to polling changes for i2c, which will try
+to setup endpoint at a specific interval.
+
+Signed-off-by: Saptarsi Saha <saptarsis@nvidia.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/net/mctp/mctp-i2c.c | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/drivers/net/mctp/mctp-i2c.c b/drivers/net/mctp/mctp-i2c.c
+index 517bc2c382e0..39d371b59e2f 100644
+--- a/drivers/net/mctp/mctp-i2c.c
++++ b/drivers/net/mctp/mctp-i2c.c
+@@ -578,8 +578,6 @@ static void mctp_i2c_xmit(struct mctp_i2c_dev *midev, struct sk_buff *skb)
+ 	}
+ 
+ 	if (rc < 0) {
+-		dev_warn_ratelimited(&midev->adapter->dev,
+-				     "__i2c_transfer failed %d\n", rc);
+ 		stats->tx_errors++;
+ 	} else {
+ 		stats->tx_bytes += skb->len;
+-- 
+2.43.0
+

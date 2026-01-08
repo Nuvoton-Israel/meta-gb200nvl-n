@@ -1,0 +1,31 @@
+From 4e5d6ef34edbcb87e015175f51e2fe69cf9ca3f9 Mon Sep 17 00:00:00 2001
+From: "Radivoje (Ogi) Jovanovic" <rjovanovic@nvidia.com>
+Date: Fri, 27 Sep 2024 10:22:56 -0700
+Subject: [PATCH] disable dual read on at25xe011
+
+on some products dual read cannot be performed due to HW
+limitataions. disable dual read to make sure chip is
+functional accross all the products
+
+Signed-off-by: Radivoje (Ogi) Jovanovic <rjovanovic@nvidia.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/mtd/spi-nor/atmel.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/mtd/spi-nor/atmel.c b/drivers/mtd/spi-nor/atmel.c
+index 77c2a3042349..85cedbff173c 100644
+--- a/drivers/mtd/spi-nor/atmel.c
++++ b/drivers/mtd/spi-nor/atmel.c
+@@ -175,7 +175,7 @@ static const struct flash_info atmel_nor_parts[] = {
+ 		.id = SNOR_ID(0x1f, 0x42, 0x00),
+ 		.name = "at25xe011",
+ 		.size = SZ_128K,
+-		.no_sfdp_flags = SECT_4K | SPI_NOR_SKIP_SFDP | SPI_NOR_DUAL_READ,
++		.no_sfdp_flags = SECT_4K | SPI_NOR_SKIP_SFDP,
+ 	}, {
+ 		.id = SNOR_ID(0x1f, 0x42, 0x16),
+ 		.name = "at25sl321",
+-- 
+2.43.0
+

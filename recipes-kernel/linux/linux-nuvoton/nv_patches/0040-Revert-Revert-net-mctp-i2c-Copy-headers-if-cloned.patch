@@ -1,0 +1,37 @@
+From 0ea8a4fe3b96611448b5d7842f7550375b3e37f6 Mon Sep 17 00:00:00 2001
+From: Leo Huang <leohu@nvidia.com>
+Date: Thu, 20 Nov 2025 05:08:25 -0800
+Subject: [PATCH] Revert "Revert "net: mctp i2c: Copy headers if cloned""
+
+This reverts commit 48836ad07d9a939828934641c8a8665debcfc228.
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/net/mctp/mctp-i2c.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/net/mctp/mctp-i2c.c b/drivers/net/mctp/mctp-i2c.c
+index 39d371b59e2f..dd0eba045aa4 100644
+--- a/drivers/net/mctp/mctp-i2c.c
++++ b/drivers/net/mctp/mctp-i2c.c
+@@ -612,6 +612,7 @@ static int mctp_i2c_header_create(struct sk_buff *skb, struct net_device *dev,
+ 	struct mctp_i2c_hdr *hdr;
+ 	struct mctp_hdr *mhdr;
+ 	u8 lldst, llsrc;
++	int rc;
+ 
+ 	if (len > MCTP_I2C_MAXMTU)
+ 		return -EMSGSIZE;
+@@ -622,6 +623,10 @@ static int mctp_i2c_header_create(struct sk_buff *skb, struct net_device *dev,
+ 	lldst = *((u8 *)daddr);
+ 	llsrc = *((u8 *)saddr);
+ 
++	rc = skb_cow_head(skb, sizeof(struct mctp_i2c_hdr));
++	if (rc)
++		return rc;
++
+ 	skb_push(skb, sizeof(struct mctp_i2c_hdr));
+ 	skb_reset_mac_header(skb);
+ 	hdr = (void *)skb_mac_header(skb);
+-- 
+2.43.0
+

@@ -1,0 +1,100 @@
+From 866c65ed2c6e0e0e7606c14dceed157cbca3bbc3 Mon Sep 17 00:00:00 2001
+From: Faizan Ali <faizana@nvidia.com>
+Date: Tue, 28 Oct 2025 16:21:45 +0530
+Subject: [PATCH] Fix: MCTP control message packets routing for NULL eid
+
+Issue : Packet drop seen for null eid destined mctp
+packets in absence of RTN_LOCAL routes.
+
+Assumption and fix:
+MCTP packets destined for NULL eid needs to reach
+atleast binded sockets irrespective to RTN_LOCAL
+routes presence for such net device.
+
+'''
+<7>[  167.840576] MCTP_PKT_RECEIVE: Packet successfully processed
+<7>[  167.847395] MCTP_PKT_RECEIVE: Received packet on dev=mctpusb0, len=7
+<7>[  167.847428] MCTP_PKT_RECEIVE: MCTP header - ver=0x01, dest=0x00, src=0x00, flags_seq_tag=0xc8
+<7>[  167.847442] MCTP_PKT_RECEIVE: Looking up route for net=1, dest=0x00
+<7>[  167.847453] MCTP_ROUTE_LOOKUP: Starting lookup for dnet=1, daddr=0x00
+<7>[  167.847463] MCTP_ROUTE_LOOKUP: No route found for dnet=1, daddr=0x00 (checked 0 routes, 0 matches)
+<7>[  167.847475] MCTP_PKT_RECEIVE: No route found, trying NULL EID lookup for dev=mctpusb0
+<7>[  167.847484] MCTP_ROUTE_LOOKUP_NULL: Looking for NULL route on dev=mctpusb0
+<7>[  167.847494] MCTP_ROUTE_LOOKUP_NULL: No NULL route found for dev=mctpusb0 (checked 0 routes)
+<7>[  167.847504] MCTP_PKT_RECEIVE: No route found for dest=0x00, net=1, checking bound sockets
+<7>[  167.847517] MCTP_PKT_RECEIVE: Found bound socket for dest=0x00, net=1
+<7>[  167.847527] MCTP_PKT_RECEIVE: Found route, calling output function
+<7>[  167.847569] MCTP_PKT_RECEIVE: Packet successfully processed
+'''
+
+Fixes jira https://jirasw.nvidia.com/browse/DGXOPENBMC-18949
+Signed-off-by: Faizan Ali <faizana@nvidia.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ net/mctp/route.c | 42 +++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 41 insertions(+), 1 deletion(-)
+
+diff --git a/net/mctp/route.c b/net/mctp/route.c
+index aa1b46faf01a..8a7571d66077 100644
+--- a/net/mctp/route.c
++++ b/net/mctp/route.c
+@@ -1366,6 +1366,37 @@ void mctp_route_remove_dev(struct mctp_dev *mdev)
+ 	}
+ }
+ 
++/* Lookup bound socket for packet delivery when no route exists */
++static struct mctp_route *mctp_route_lookup_bound_socket(struct net *net, struct sk_buff *skb)
++{
++	struct mctp_hdr *mh;
++	struct mctp_sock *msk;
++	struct mctp_route *rt = NULL;
++
++	WARN_ON(!rcu_read_lock_held());
++
++	mh = mctp_hdr(skb);
++
++	if (!skb_headlen(skb))
++		return NULL;
++
++	/* Look for bound sockets that match this packet */
++	msk = mctp_lookup_bind(net, skb);
++	if (msk) {
++		/* Create a temporary route for socket delivery */
++		rt = mctp_route_alloc();
++		if (rt) {
++			rt->min = mh->dest;
++			rt->max = mh->dest;
++			rt->type = RTN_LOCAL;
++			rt->output = mctp_route_input;
++			rt->dev = NULL;
++		}
++	}
++
++	return rt;
++}
++
+ /* Incoming packet-handling */
+ 
+ static int mctp_pkttype_receive(struct sk_buff *skb, struct net_device *dev,
+@@ -1421,8 +1452,17 @@ static int mctp_pkttype_receive(struct sk_buff *skb, struct net_device *dev,
+ 	rt = mctp_route_lookup(net, cb->net, mh->dest);
+ 
+ 	/* NULL EID, but addressed to our physical address */
+-	if (!rt && mh->dest == MCTP_ADDR_NULL && skb->pkt_type == PACKET_HOST)
++	if (!rt && mh->dest == MCTP_ADDR_NULL && skb->pkt_type == PACKET_HOST) {
+ 		rt = mctp_route_lookup_null(net, dev);
++		if (!rt) {
++			/* Check if there's a bound socket that matches for this packet */
++			rt = mctp_route_lookup_bound_socket(net, skb);
++			if (rt) {
++				rt->dev = mdev;
++				mctp_dev_hold(rt->dev);
++			}
++		}
++	}
+ 
+ 	if (!rt)
+ 		goto err_drop;
+-- 
+2.43.0
+

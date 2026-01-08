@@ -1,0 +1,30 @@
+From 5c98555e393e1b7065f526f70ec61762c55f5e43 Mon Sep 17 00:00:00 2001
+From: "Radivoje (Ogi) Jovanovic" <rjovanovic@nvidia.com>
+Date: Wed, 22 May 2024 09:30:44 -0700
+Subject: [PATCH] add atmel at25xe011 chip support
+
+Signed-off-by: Radivoje (Ogi) Jovanovic <rjovanovic@nvidia.com>
+Upstream-Status: Pending [Not submitted to upstream yet]
+---
+ drivers/mtd/spi-nor/atmel.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/mtd/spi-nor/atmel.c b/drivers/mtd/spi-nor/atmel.c
+index 45d1153a04a0..77c2a3042349 100644
+--- a/drivers/mtd/spi-nor/atmel.c
++++ b/drivers/mtd/spi-nor/atmel.c
+@@ -171,6 +171,11 @@ static const struct flash_info atmel_nor_parts[] = {
+ 		.name = "at45db081d",
+ 		.size = SZ_1M,
+ 		.no_sfdp_flags = SECT_4K,
++	}, {
++		.id = SNOR_ID(0x1f, 0x42, 0x00),
++		.name = "at25xe011",
++		.size = SZ_128K,
++		.no_sfdp_flags = SECT_4K | SPI_NOR_SKIP_SFDP | SPI_NOR_DUAL_READ,
+ 	}, {
+ 		.id = SNOR_ID(0x1f, 0x42, 0x16),
+ 		.name = "at25sl321",
+-- 
+2.43.0
+
